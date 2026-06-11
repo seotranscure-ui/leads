@@ -44,6 +44,9 @@ export default function Upload() {
       'Created PK': fmtInZone(l.created_utc, PK_ZONE), 'Created US': fmtInZone(l.created_utc, SRC_ZONE),
       'Monthly Collections (CRM)': l.monthly_collections, 'Ticket $/mo': ticketValue(l),
       'High Ticket': isHigh(l, rule) ? 'Yes' : 'No', Notes: effectiveNotes(l),
+      'Source/Medium': l.manual_source_medium, 'First Landing Page': l.manual_first_landing ?? l.first_page,
+      '2nd Page': l.manual_second_page, 'Lead Submit Page': l.manual_submit_page,
+      'Possible Search Query': l.manual_search_query, 'Recording': l.manual_recording,
     }))
     if (!rows.length) return
     const blob = new Blob([toCSV(rows)], { type: 'text/csv' })

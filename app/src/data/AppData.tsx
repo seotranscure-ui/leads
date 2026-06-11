@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import { fetchLeads, getRule, saveManual, setRule as setRuleApi } from '../lib/api'
-import { DEFAULT_RULE, type HighTicketRule, type Lead } from '../lib/leads'
+import { DEFAULT_RULE, type HighTicketRule, type Lead, type ManualPatch } from '../lib/leads'
 
 export interface Drill { label: string; test: (l: Lead) => boolean }
 
@@ -10,7 +10,7 @@ interface AppCtx {
   loading: boolean
   error: string | null
   refresh: () => Promise<void>
-  updateManual: (recordId: string, patch: Partial<Pick<Lead, 'manual_ticket' | 'manual_high' | 'manual_notes'>>) => Promise<void>
+  updateManual: (recordId: string, patch: ManualPatch) => Promise<void>
   updateRule: (r: HighTicketRule) => Promise<void>
   drill: Drill | null
   setDrill: (d: Drill | null) => void

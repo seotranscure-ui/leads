@@ -1,4 +1,4 @@
-import { useMemo, useReducer, useRef, useState, type MouseEvent as RMouseEvent } from 'react'
+import { Fragment, useMemo, useReducer, useRef, useState, type MouseEvent as RMouseEvent } from 'react'
 import { useAppData } from '../data/AppData'
 import { FUNNEL_ORDER } from '../lib/funnel'
 import { displayName, effectiveNotes, fmtMoney, isHigh, num, ticketValue, type Lead } from '../lib/leads'
@@ -34,6 +34,7 @@ export default function LeadsPage() {
   const [fHigh, setFHigh] = useState(false)
   const [sortKey, setSortKey] = useState('created')
   const [sortDir, setSortDir] = useState(-1)
+  const [open, setOpen] = useState<Set<string>>(() => new Set())
   const layout = useRef<Layout>(loadLayout())
   const [, force] = useReducer((x) => x + 1, 0)
   const tableRef = useRef<HTMLTableElement>(null)
@@ -100,6 +101,8 @@ export default function LeadsPage() {
     const next = l.manual_high === true ? false : l.manual_high === false ? null : true
     updateManual(l.record_id, { manual_high: next })
   }
+  const toggleOpen = (id: string) => setOpen((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+  const orNull = (v: string) => (v.trim() === '' ? null : v)
 
   return (
     <>
@@ -145,8 +148,10 @@ export default function LeadsPage() {
             </thead>
             <tbody>
               {rows.map((l) => (
-                <tr key={l.record_id} style={layout.current.row[l.record_id] ? { height: layout.current.row[l.record_id] + 'px' } : undefined}>
+                <Fragment key={l.record_id}>
+                <tr style={layout.current.row[l.record_id] ? { height: layout.current.row[l.record_id] + 'px' } : undefined}>
                   <td>
+                    <button className="expander" title="Source tracking details" onClick={() => toggleOpen(l.record_id)}>{open.has(l.record_id) ? '▾' : '▸'}</button>
                     <b>{displayName(l)}</b>
                     <div className="small muted">{l.email}</div>
                     <div className="rowgrip" onMouseDown={(e) => startRowResize(e, l.record_id)} />
@@ -170,6 +175,40 @@ export default function LeadsPage() {
                       onBlur={(e) => updateManual(l.record_id, { manual_notes: e.target.value })} />
                   </td>
                 </tr>
+                {open.has(l.record_id) && (
+                  <tr className="detailrow">
+                    <td colSpan={COLS.length}>
+                      <div className="detail">
+                        <div className="detail-head">Source tracking — {displayName(l)}</div>
+                        <div className="detail-grid">
+                          <label>Source / Medium
+                            <input defaultValue={l.manual_source_medium ?? ''} placeholder={l.referrer ? 'CRM referrer: ' + l.referrer : 'e.g. Google / Organic'}
+                              onBlur={(e) => updateManual(l.record_id, { manual_source_medium: orNull(e.target.value) })} /></label>
+                          <label>First landing page
+                            <input defaultValue={l.manual_first_landing ?? ''} placeholder={l.first_page || 'https://…'}
+                              onBlur={(e) => updateManual(l.record_id, { manual_first_landing: orNull(e.target.value) })} /></label>
+                          <label>2nd page
+                            <input defaultValue={l.manual_second_page ?? ''} placeholder="https://…"
+                              onBlur={(e) => updateManual(l.record_id, { manual_second_page: orNull(e.target.value) })} /></label>
+                          <label>Lead submit page
+                            <input defaultValue={l.manual_submit_page ?? ''} placeholder="page the form was submitted on"
+                              onBlur={(e) => updateManual(l.record_id, { manual_submit_page: orNull(e.target.value) })} /></label>
+                          <label>Recording (Hotjar) link
+                            <input type="url" defaultValue={l.manual_recording ?? ''} placeholder="https://insights.hotjar.com/…"
+                              onBlur={(e) => updateManual(l.record_id, { manual_recording: orNull(e.target.value) })} /></label>
+                          <label className="wide">Possible search query
+                            <textarea rows={2} defaultValue={l.manual_search_query ?? ''} placeholder="keywords the lead likely searched"
+                              onBlur={(e) => updateManual(l.record_id, { manual_search_query: orNull(e.target.value) })} /></label>
+                        </div>
+                        <div className="detail-ref small muted">
+                          CRM First Page Visited: <b>{l.first_page || '—'}</b> · Referrer: <b>{l.referrer || '—'}</b>
+                          {l.manual_recording && <> · <a href={l.manual_recording} target="_blank" rel="noreferrer">open recording ↗</a></>}
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+                </Fragment>
               ))}
             </tbody>
           </table>

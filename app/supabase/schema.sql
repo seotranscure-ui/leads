@@ -40,9 +40,24 @@ create table if not exists public.leads (
   manual_ticket        numeric,         -- override of monthly_collections
   manual_high          boolean,         -- null = auto by threshold; true/false = override
   manual_notes         text,            -- override of CRM comments
+  -- source tracking (the old Source Tracking sheet — not in the CRM export)
+  manual_source_medium text,
+  manual_first_landing text,
+  manual_second_page   text,
+  manual_submit_page   text,
+  manual_search_query  text,
+  manual_recording     text,
   manual_updated_by    uuid references auth.users (id),
   manual_updated_at    timestamptz
 );
+
+-- Patch existing tables (safe if the table already existed before these columns).
+alter table public.leads add column if not exists manual_source_medium text;
+alter table public.leads add column if not exists manual_first_landing text;
+alter table public.leads add column if not exists manual_second_page   text;
+alter table public.leads add column if not exists manual_submit_page   text;
+alter table public.leads add column if not exists manual_search_query  text;
+alter table public.leads add column if not exists manual_recording     text;
 
 create index if not exists leads_created_idx  on public.leads (created_utc);
 create index if not exists leads_stage_idx    on public.leads (stage);

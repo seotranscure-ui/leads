@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import { DEFAULT_RULE, type CrmLead, type HighTicketRule, type Lead } from './leads'
+import { DEFAULT_RULE, type CrmLead, type HighTicketRule, type Lead, type ManualPatch } from './leads'
 
 // Fetch all leads (paged past PostgREST's 1000-row default cap).
 export async function fetchLeads(): Promise<Lead[]> {
@@ -55,10 +55,7 @@ export async function importLeads(rows: CrmLead[], fileName: string): Promise<Im
 }
 
 // Save the manual enrichment fields for one lead (never overwritten by import).
-export async function saveManual(
-  recordId: string,
-  patch: Partial<Pick<Lead, 'manual_ticket' | 'manual_high' | 'manual_notes'>>,
-): Promise<void> {
+export async function saveManual(recordId: string, patch: ManualPatch): Promise<void> {
   const { data: u } = await supabase.auth.getUser()
   const { error } = await supabase
     .from('leads')

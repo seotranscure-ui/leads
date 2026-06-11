@@ -27,14 +27,27 @@ export interface Lead {
   created_utc: string | null
   modified_utc: string | null
   raw: Record<string, unknown> | null
-  // manual enrichment
+  // manual enrichment (entered in-app, preserved across imports)
   manual_ticket: number | null
   manual_high: boolean | null
   manual_notes: string | null
+  // source tracking (the old Source Tracking sheet — not in the CRM export)
+  manual_source_medium: string | null
+  manual_first_landing: string | null
+  manual_second_page: string | null
+  manual_submit_page: string | null
+  manual_search_query: string | null
+  manual_recording: string | null
 }
 
+export type ManualField =
+  | 'manual_ticket' | 'manual_high' | 'manual_notes'
+  | 'manual_source_medium' | 'manual_first_landing' | 'manual_second_page'
+  | 'manual_submit_page' | 'manual_search_query' | 'manual_recording'
+export type ManualPatch = Partial<Pick<Lead, ManualField>>
+
 // The CRM-owned subset that an import is allowed to write (no manual_* fields).
-export type CrmLead = Omit<Lead, 'manual_ticket' | 'manual_high' | 'manual_notes'>
+export type CrmLead = Omit<Lead, ManualField>
 
 export function num(v: unknown): number | null {
   if (v == null) return null

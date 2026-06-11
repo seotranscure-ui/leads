@@ -31,7 +31,12 @@ export default function LeadsPage() {
   const [fMonth, setFMonth] = useState('')
   const [fSource, setFSource] = useState('')
   const [fStage, setFStage] = useState('')
-  const [fHigh, setFHigh] = useState(false)
+  const [fStatus, setFStatus] = useState('')
+  const [fSpecialty, setFSpecialty] = useState('')
+  const [fPhysicians, setFPhysicians] = useState('')
+  const [fTicketMin, setFTicketMin] = useState('')
+  const [fTicketMax, setFTicketMax] = useState('')
+  const [fHigh, setFHigh] = useState<'all' | 'high' | 'low'>('all')
   const [sortKey, setSortKey] = useState('created')
   const [sortDir, setSortDir] = useState(-1)
   const [open, setOpen] = useState<Set<string>>(() => new Set())
@@ -49,13 +54,23 @@ export default function LeadsPage() {
     return [...map.entries()].sort((a, b) => (a[0] < b[0] ? 1 : -1))
   }, [leads])
   const sources = useMemo(() => [...new Set(leads.map((l) => l.source))].sort(), [leads])
+  const statuses = useMemo(() => [...new Set(leads.map((l) => l.status).filter(Boolean))].sort(), [leads])
+  const specialties = useMemo(() => [...new Set(leads.map((l) => (l.specialty || '').trim()).filter(Boolean))].sort(), [leads])
+  const physiciansOpts = useMemo(() => [...new Set(leads.map((l) => l.physicians || '').filter(Boolean))].sort(), [leads])
 
   const rows = useMemo(() => {
     let base = drill ? leads.filter(drill.test) : leads.filter((l) => {
       if (fMonth && monthKey(l) !== fMonth) return false
       if (fSource && l.source !== fSource) return false
       if (fStage && l.stage !== fStage) return false
-      if (fHigh && !isHigh(l, rule)) return false
+      if (fStatus && l.status !== fStatus) return false
+      if (fSpecialty && (l.specialty || '').trim() !== fSpecialty) return false
+      if (fPhysicians && (l.physicians || '') !== fPhysicians) return false
+      if (fHigh === 'high' && !isHigh(l, rule)) return false
+      if (fHigh === 'low' && isHigh(l, rule)) return false
+      const tv = ticketValue(l)
+      if (fTicketMin !== '' && (tv == null || tv < Number(fTicketMin))) return false
+      if (fTicketMax !== '' && (tv == null || tv > Number(fTicketMax))) return false
       return true
     })
     if (q.trim()) {
@@ -72,7 +87,7 @@ export default function LeadsPage() {
       }
     }
     return [...base].sort((a, b) => { const va = val(a), vb = val(b); return va < vb ? -sortDir : va > vb ? sortDir : 0 })
-  }, [leads, drill, q, fMonth, fSource, fStage, fHigh, sortKey, sortDir, rule])
+  }, [leads, drill, q, fMonth, fSource, fStage, fStatus, fSpecialty, fPhysicians, fTicketMin, fTicketMax, fHigh, sortKey, sortDir, rule])
 
   const setSort = (k: string) => { if (sortKey === k) setSortDir((d) => -d); else { setSortKey(k); setSortDir(1) } }
 
@@ -104,26 +119,55 @@ export default function LeadsPage() {
   const toggleOpen = (id: string) => setOpen((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
   const orNull = (v: string) => (v.trim() === '' ? null : v)
 
+  const clearFilters = () => {
+    setDrill(null); setQ(''); setFMonth(''); setFSource(''); setFStage(''); setFStatus('')
+    setFSpecialty(''); setFPhysicians(''); setFTicketMin(''); setFTicketMax(''); setFHigh('all')
+  }
+  const activeCount = [q, fMonth, fSource, fStage, fStatus, fSpecialty, fPhysicians, fTicketMin, fTicketMax].filter(Boolean).length + (fHigh !== 'all' ? 1 : 0)
+
   return (
     <>
       <div className="controls">
-        <input type="text" placeholder="Search name, practice, email…" style={{ minWidth: 240 }} value={q} onChange={(e) => setQ(e.target.value)} />
+        <input type="text" placeholder="Search name, practice, email, notes…" style={{ minWidth: 240 }} value={q} onChange={(e) => clearDropdownsAndDrill(() => setQ(e.target.value))} />
+        <label className="small muted"><input type="checkbox" checked={layout.current.wrap} onChange={toggleWrap} /> Wrap text</label>
+        <button className="btn ghost" onClick={resetLayout} style={{ padding: '6px 12px' }}>Reset layout</button>
+        <div className="small muted" style={{ marginLeft: 'auto' }}>{rows.length} shown{activeCount ? ` · ${activeCount} filter${activeCount > 1 ? 's' : ''} active` : ''}</div>
+      </div>
+
+      <div className="controls filters">
+        <span className="small muted" style={{ fontWeight: 700 }}>Filters:</span>
         <select value={fMonth} onChange={(e) => clearDropdownsAndDrill(() => setFMonth(e.target.value))}>
-          <option value="">All months</option>
+          <option value="">Month: all</option>
           {months.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
         </select>
         <select value={fSource} onChange={(e) => clearDropdownsAndDrill(() => setFSource(e.target.value))}>
-          <option value="">All sources</option>
+          <option value="">Source: all</option>
           {sources.map((s) => <option key={s} value={s}>{s}</option>)}
         </select>
         <select value={fStage} onChange={(e) => clearDropdownsAndDrill(() => setFStage(e.target.value))}>
-          <option value="">All stages</option>
+          <option value="">Stage: all</option>
           {FUNNEL_ORDER.map((s) => <option key={s} value={s}>{s}</option>)}
         </select>
-        <label className="small muted"><input type="checkbox" checked={fHigh} onChange={(e) => clearDropdownsAndDrill(() => setFHigh(e.target.checked))} /> High-ticket only</label>
-        <label className="small muted"><input type="checkbox" checked={layout.current.wrap} onChange={toggleWrap} /> Wrap text</label>
-        <button className="btn ghost" onClick={resetLayout} style={{ padding: '6px 12px' }}>Reset layout</button>
-        <div className="small muted" style={{ marginLeft: 'auto' }}>{rows.length} shown</div>
+        <select value={fStatus} onChange={(e) => clearDropdownsAndDrill(() => setFStatus(e.target.value))}>
+          <option value="">Status: all</option>
+          {statuses.map((s) => <option key={s} value={s}>{s}</option>)}
+        </select>
+        <select value={fSpecialty} onChange={(e) => clearDropdownsAndDrill(() => setFSpecialty(e.target.value))}>
+          <option value="">Specialty: all</option>
+          {specialties.map((s) => <option key={s} value={s}>{s}</option>)}
+        </select>
+        <select value={fPhysicians} onChange={(e) => clearDropdownsAndDrill(() => setFPhysicians(e.target.value))}>
+          <option value="">Size: all</option>
+          {physiciansOpts.map((s) => <option key={s} value={s}>{s} physicians</option>)}
+        </select>
+        <input type="number" placeholder="Ticket min $" style={{ width: 115 }} value={fTicketMin} onChange={(e) => clearDropdownsAndDrill(() => setFTicketMin(e.target.value))} />
+        <input type="number" placeholder="Ticket max $" style={{ width: 115 }} value={fTicketMax} onChange={(e) => clearDropdownsAndDrill(() => setFTicketMax(e.target.value))} />
+        <select value={fHigh} onChange={(e) => clearDropdownsAndDrill(() => setFHigh(e.target.value as 'all' | 'high' | 'low'))}>
+          <option value="all">High: all</option>
+          <option value="high">High-ticket only</option>
+          <option value="low">Non high-ticket</option>
+        </select>
+        <button className="btn ghost" onClick={clearFilters} disabled={!activeCount && !drill} style={{ padding: '6px 12px' }}>Clear filters</button>
       </div>
 
       {drill && (

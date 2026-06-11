@@ -1,21 +1,21 @@
-# dependencies / build output
+# This project folder also holds unrelated SEO working files.
+# Whitelist approach: ignore everything at the root, then re-include only the
+# lead-tracker app and its companions.
+/*
+!/.gitignore
+!/PLAN.md
+!/app/
+!/prototype/
+
+# within the tracked dirs
 node_modules/
 dist/
 dist-ssr/
-
-# TypeScript build artifacts
 *.tsbuildinfo
 app/vite.config.js
 app/vite.config.d.ts
-
-# local env (contains keys — never commit)
 .env
 .env.local
 *.local
-
-# local editor / harness config (machine-specific paths)
-.claude/
-
-# os
 .DS_Store
 Thumbs.db

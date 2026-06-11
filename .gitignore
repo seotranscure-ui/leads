@@ -1,0 +1,21 @@
+# dependencies / build output
+node_modules/
+dist/
+dist-ssr/
+
+# TypeScript build artifacts
+*.tsbuildinfo
+app/vite.config.js
+app/vite.config.d.ts
+
+# local env (contains keys — never commit)
+.env
+.env.local
+*.local
+
+# local editor / harness config (machine-specific paths)
+.claude/
+
+# os
+.DS_Store
+Thumbs.db

@@ -1,0 +1,183 @@
+import { useMemo, useReducer, useRef, useState, type MouseEvent as RMouseEvent } from 'react'
+import { useAppData } from '../data/AppData'
+import { FUNNEL_ORDER } from '../lib/funnel'
+import { displayName, effectiveNotes, fmtMoney, isHigh, num, ticketValue, type Lead } from '../lib/leads'
+import { fmtInZone, PK_ZONE, SRC_ZONE } from '../lib/time'
+import { monthKey } from '../lib/stats'
+
+const COLS = [
+  { key: 'name', label: 'Name', w: 180 },
+  { key: 'practice', label: 'Practice', w: 150 },
+  { key: 'specialty', label: 'Specialty', w: 120 },
+  { key: 'physicians', label: 'Physicians', w: 85 },
+  { key: 'source', label: 'Source', w: 90 },
+  { key: 'status', label: 'Status', w: 135 },
+  { key: 'stage', label: 'Stage', w: 95 },
+  { key: 'created', label: 'Created (PK / US)', w: 165 },
+  { key: 'ticket', label: 'Ticket $/mo', w: 95 },
+  { key: 'high', label: 'High', w: 46 },
+  { key: 'notes', label: 'Notes', w: 240 },
+] as const
+
+const LS_LAYOUT = 'transcure_layout_v3'
+interface Layout { col: Record<string, number>; row: Record<string, number>; wrap: boolean }
+function loadLayout(): Layout {
+  try { const o = JSON.parse(localStorage.getItem(LS_LAYOUT) || '{}'); return { col: o.col || {}, row: o.row || {}, wrap: !!o.wrap } } catch { return { col: {}, row: {}, wrap: false } }
+}
+
+export default function LeadsPage() {
+  const { leads, rule, updateManual, drill, setDrill } = useAppData()
+  const [q, setQ] = useState('')
+  const [fMonth, setFMonth] = useState('')
+  const [fSource, setFSource] = useState('')
+  const [fStage, setFStage] = useState('')
+  const [fHigh, setFHigh] = useState(false)
+  const [sortKey, setSortKey] = useState('created')
+  const [sortDir, setSortDir] = useState(-1)
+  const layout = useRef<Layout>(loadLayout())
+  const [, force] = useReducer((x) => x + 1, 0)
+  const tableRef = useRef<HTMLTableElement>(null)
+
+  const saveLayout = () => localStorage.setItem(LS_LAYOUT, JSON.stringify(layout.current))
+
+  const clearDropdownsAndDrill = (cb: () => void) => { setDrill(null); cb() }
+
+  const months = useMemo(() => {
+    const map = new Map<string, string>()
+    leads.forEach((l) => { const k = monthKey(l); if (!map.has(k)) map.set(k, l.created_utc ? new Intl.DateTimeFormat('en-US', { timeZone: PK_ZONE, year: 'numeric', month: 'long' }).format(new Date(l.created_utc)) : 'Unknown date') })
+    return [...map.entries()].sort((a, b) => (a[0] < b[0] ? 1 : -1))
+  }, [leads])
+  const sources = useMemo(() => [...new Set(leads.map((l) => l.source))].sort(), [leads])
+
+  const rows = useMemo(() => {
+    let base = drill ? leads.filter(drill.test) : leads.filter((l) => {
+      if (fMonth && monthKey(l) !== fMonth) return false
+      if (fSource && l.source !== fSource) return false
+      if (fStage && l.stage !== fStage) return false
+      if (fHigh && !isHigh(l, rule)) return false
+      return true
+    })
+    if (q.trim()) {
+      const s = q.toLowerCase().trim()
+      base = base.filter((l) => (displayName(l) + ' ' + (l.practice || '') + ' ' + (l.email || '') + ' ' + (l.specialty || '') + ' ' + effectiveNotes(l)).toLowerCase().includes(s))
+    }
+    const val = (l: Lead): string | number => {
+      switch (sortKey) {
+        case 'name': return displayName(l).toLowerCase()
+        case 'created': return l.created_utc || ''
+        case 'ticket': return ticketValue(l) || 0
+        case 'high': return isHigh(l, rule) ? 1 : 0
+        default: return String((l as unknown as Record<string, unknown>)[sortKey] ?? '').toLowerCase()
+      }
+    }
+    return [...base].sort((a, b) => { const va = val(a), vb = val(b); return va < vb ? -sortDir : va > vb ? sortDir : 0 })
+  }, [leads, drill, q, fMonth, fSource, fStage, fHigh, sortKey, sortDir, rule])
+
+  const setSort = (k: string) => { if (sortKey === k) setSortDir((d) => -d); else { setSortKey(k); setSortDir(1) } }
+
+  const startColResize = (e: RMouseEvent, key: string) => {
+    e.preventDefault(); e.stopPropagation()
+    const table = (e.currentTarget as HTMLElement).closest('table')!
+    const idx = COLS.findIndex((c) => c.key === key)
+    const col = table.querySelectorAll('colgroup col')[idx] as HTMLElement
+    const startX = e.clientX, startW = col.getBoundingClientRect().width
+    const mm = (ev: MouseEvent) => { const w = Math.max(40, Math.round(startW + ev.clientX - startX)); col.style.width = w + 'px'; layout.current.col[key] = w }
+    const mu = () => { window.removeEventListener('mousemove', mm); window.removeEventListener('mouseup', mu); saveLayout() }
+    window.addEventListener('mousemove', mm); window.addEventListener('mouseup', mu)
+  }
+  const startRowResize = (e: RMouseEvent, id: string) => {
+    e.preventDefault(); e.stopPropagation()
+    const tr = (e.currentTarget as HTMLElement).closest('tr')!
+    const startY = e.clientY, startH = tr.getBoundingClientRect().height
+    const mm = (ev: MouseEvent) => { const h = Math.max(28, Math.round(startH + ev.clientY - startY)); tr.style.height = h + 'px'; layout.current.row[id] = h }
+    const mu = () => { window.removeEventListener('mousemove', mm); window.removeEventListener('mouseup', mu); saveLayout() }
+    window.addEventListener('mousemove', mm); window.addEventListener('mouseup', mu)
+  }
+  const toggleWrap = () => { layout.current.wrap = !layout.current.wrap; saveLayout(); force() }
+  const resetLayout = () => { layout.current = { col: {}, row: {}, wrap: false }; saveLayout(); force() }
+
+  const toggleHigh = (l: Lead) => {
+    const next = l.manual_high === true ? false : l.manual_high === false ? null : true
+    updateManual(l.record_id, { manual_high: next })
+  }
+
+  return (
+    <>
+      <div className="controls">
+        <input type="text" placeholder="Search name, practice, email…" style={{ minWidth: 240 }} value={q} onChange={(e) => setQ(e.target.value)} />
+        <select value={fMonth} onChange={(e) => clearDropdownsAndDrill(() => setFMonth(e.target.value))}>
+          <option value="">All months</option>
+          {months.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+        </select>
+        <select value={fSource} onChange={(e) => clearDropdownsAndDrill(() => setFSource(e.target.value))}>
+          <option value="">All sources</option>
+          {sources.map((s) => <option key={s} value={s}>{s}</option>)}
+        </select>
+        <select value={fStage} onChange={(e) => clearDropdownsAndDrill(() => setFStage(e.target.value))}>
+          <option value="">All stages</option>
+          {FUNNEL_ORDER.map((s) => <option key={s} value={s}>{s}</option>)}
+        </select>
+        <label className="small muted"><input type="checkbox" checked={fHigh} onChange={(e) => clearDropdownsAndDrill(() => setFHigh(e.target.checked))} /> High-ticket only</label>
+        <label className="small muted"><input type="checkbox" checked={layout.current.wrap} onChange={toggleWrap} /> Wrap text</label>
+        <button className="btn ghost" onClick={resetLayout} style={{ padding: '6px 12px' }}>Reset layout</button>
+        <div className="small muted" style={{ marginLeft: 'auto' }}>{rows.length} shown</div>
+      </div>
+
+      {drill && (
+        <div id="drillBanner" className="note">
+          Showing <b>{drill.label}</b> — {rows.length} lead(s). <a onClick={() => setDrill(null)}>Show all leads</a>
+        </div>
+      )}
+
+      <div className="card" style={{ padding: 0 }}>
+        <div className="tablewrap">
+          <table id="leadsTable" className={layout.current.wrap ? 'wrap' : ''} ref={tableRef}>
+            <colgroup>{COLS.map((c) => <col key={c.key} style={{ width: (layout.current.col[c.key] || c.w) + 'px' }} />)}</colgroup>
+            <thead>
+              <tr>
+                {COLS.map((c) => (
+                  <th key={c.key} className="sortable" onClick={() => setSort(c.key)}>
+                    {c.label}{sortKey === c.key ? (sortDir > 0 ? ' ▲' : ' ▼') : ''}
+                    <div className="colgrip" onClick={(e) => e.stopPropagation()} onMouseDown={(e) => startColResize(e, c.key)} />
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((l) => (
+                <tr key={l.record_id} style={layout.current.row[l.record_id] ? { height: layout.current.row[l.record_id] + 'px' } : undefined}>
+                  <td>
+                    <b>{displayName(l)}</b>
+                    <div className="small muted">{l.email}</div>
+                    <div className="rowgrip" onMouseDown={(e) => startRowResize(e, l.record_id)} />
+                  </td>
+                  <td>{l.practice}</td>
+                  <td>{l.specialty}</td>
+                  <td>{l.physicians}</td>
+                  <td>{l.source}</td>
+                  <td>{l.status}</td>
+                  <td><span className={'chip stage-' + l.stage}>{l.stage}</span></td>
+                  <td className="timecell">{fmtInZone(l.created_utc, PK_ZONE) || '—'}<div className="us">{fmtInZone(l.created_utc, SRC_ZONE)} US</div></td>
+                  <td>
+                    <input className="cell" type="text" defaultValue={l.manual_ticket != null ? String(l.manual_ticket) : ''}
+                      placeholder={l.monthly_collections != null ? fmtMoney(l.monthly_collections) : '—'}
+                      title={l.monthly_collections != null ? 'CRM Monthly Collections: ' + fmtMoney(l.monthly_collections) : 'no CRM value'}
+                      onBlur={(e) => updateManual(l.record_id, { manual_ticket: e.target.value.trim() === '' ? null : num(e.target.value) })} />
+                  </td>
+                  <td className="right"><span className="flag" title="toggle high-ticket" onClick={() => toggleHigh(l)}>{isHigh(l, rule) ? '⭐' : '☆'}</span></td>
+                  <td className="notes">
+                    <textarea className="notecell" rows={2} defaultValue={effectiveNotes(l)} placeholder="add note…" title="Drag the bottom edge to expand"
+                      onBlur={(e) => updateManual(l.record_id, { manual_notes: e.target.value })} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <p className="small muted" style={{ marginTop: 8 }}>
+        Times shown as <b>PK</b> with <span className="us">US Chicago</span> beneath. Ticket / High / Notes are saved to the shared database and preserved across imports.
+      </p>
+    </>
+  )
+}

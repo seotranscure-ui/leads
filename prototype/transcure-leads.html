@@ -1,0 +1,714 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Transcure — SEO Lead Tracker (Prototype)</title>
+<style>
+  :root{
+    --bg:#f4f6fa; --card:#ffffff; --ink:#1f2733; --muted:#6b7686; --line:#e3e8f0;
+    --brand:#0e7c66; --brand2:#0b6f8a; --accent:#7c3aed; --warn:#b91c1c; --gold:#b7791f;
+    --chip:#eef2f7;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--ink);font-size:14px}
+  header.app{background:#0f1a2b;color:#fff;padding:14px 22px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+  header.app h1{font-size:17px;margin:0;font-weight:600;letter-spacing:.2px}
+  header.app .pill{font-size:11px;background:#22344f;padding:3px 9px;border-radius:20px;color:#cdd8e8}
+  nav.tabs{display:flex;gap:4px;margin-left:auto;flex-wrap:wrap}
+  nav.tabs button{background:transparent;border:0;color:#aab7c9;padding:8px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600}
+  nav.tabs button.active{background:#22344f;color:#fff}
+  main{padding:22px;max-width:1500px;margin:0 auto}
+  .view{display:none} .view.active{display:block}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;box-shadow:0 1px 2px rgba(16,24,40,.04)}
+  .grid{display:grid;gap:14px}
+  .kpis{grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}
+  .kpi .label{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.5px}
+  .kpi .val{font-size:28px;font-weight:700;margin-top:6px}
+  .kpi .sub{font-size:12px;color:var(--muted);margin-top:2px}
+  .kpi.clickable{cursor:pointer;transition:.12s}
+  .kpi.clickable:hover{box-shadow:0 4px 12px rgba(16,24,40,.13);transform:translateY(-1px);border-color:var(--brand)}
+  td.link,tr.link{cursor:pointer}
+  td.link{color:var(--brand2);font-weight:700}
+  td.link:hover{text-decoration:underline}
+  tr.link:hover{background:#eef6ff}
+  #drillBanner a{color:#92400e;font-weight:700;cursor:pointer;text-decoration:underline}
+  h2.section{font-size:15px;margin:26px 0 10px;font-weight:700}
+  h2.section:first-child{margin-top:0}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.4px;cursor:pointer;white-space:nowrap;user-select:none;position:sticky;top:0;background:#fafbfd}
+  th.sortable:hover{color:var(--ink)}
+  tbody tr:hover{background:#f8fafc}
+  .tablewrap{max-height:65vh;overflow:auto;border:1px solid var(--line);border-radius:10px}
+  /* resizable leads grid */
+  #leadsTable{table-layout:fixed;width:100%}
+  #leadsTable td{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #leadsTable.wrap td{white-space:normal;word-break:break-word}
+  #leadsTable tbody td:first-child{position:relative}
+  .colgrip{position:absolute;top:0;right:0;width:8px;height:100%;cursor:col-resize;z-index:3}
+  .colgrip:hover{background:#94a3b8}
+  .rowgrip{position:absolute;left:0;bottom:0;width:100%;height:5px;cursor:row-resize;z-index:1}
+  .rowgrip:hover{background:#94a3b8}
+  #leadsTable td.notes{overflow:visible;white-space:normal}
+  .notecell{width:100%;border:1px solid transparent;border-radius:6px;padding:4px 6px;font:inherit;
+    color:inherit;background:transparent;resize:vertical;white-space:pre-wrap;overflow:hidden;
+    min-height:26px;line-height:1.4;display:block}
+  .notecell:hover{border-color:var(--line);background:#fff}
+  .notecell:focus{border-color:var(--brand);background:#fff;outline:none}
+  .chip{display:inline-block;padding:2px 9px;border-radius:20px;background:var(--chip);font-size:11px;font-weight:600;white-space:nowrap}
+  .stage-Lead{background:#eef2f7;color:#475569}
+  .stage-Engaged{background:#dbeafe;color:#1e40af}
+  .stage-Demo{background:#e0e7ff;color:#3730a3}
+  .stage-Audit{background:#dcfce7;color:#166534}
+  .stage-Negotiation{background:#cffafe;color:#0e7490}
+  .stage-Won{background:#bbf7d0;color:#14532d}
+  .stage-Lost{background:#fee2e2;color:#991b1b}
+  .controls{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+  select,input[type=text],input[type=number]{padding:7px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;background:#fff;color:var(--ink)}
+  input[type=text].cell{width:100%;padding:4px 6px}
+  button.btn{background:var(--brand);color:#fff;border:0;padding:9px 16px;border-radius:8px;font-weight:600;cursor:pointer;font-size:13px}
+  button.btn.ghost{background:#fff;color:var(--ink);border:1px solid var(--line)}
+  button.btn.warn{background:var(--warn)}
+  .drop{border:2px dashed #c5cfdd;border-radius:14px;padding:48px;text-align:center;color:var(--muted);background:#fff;cursor:pointer;transition:.15s}
+  .drop.drag{border-color:var(--brand);background:#f0fbf7;color:var(--brand)}
+  .muted{color:var(--muted)}
+  .small{font-size:12px}
+  .right{text-align:right}
+  .timecell{white-space:nowrap;font-variant-numeric:tabular-nums}
+  .timecell .us{color:var(--muted);font-size:11px}
+  .funnelbar{display:flex;align-items:center;gap:10px;margin:6px 0}
+  .funnelbar .name{width:120px;font-weight:600;font-size:13px}
+  .funnelbar .bar{height:26px;border-radius:6px;min-width:2px;display:flex;align-items:center;color:#fff;padding:0 8px;font-size:12px;font-weight:600}
+  .note{background:#fffbeb;border:1px solid #fde68a;color:#92400e;padding:10px 14px;border-radius:10px;font-size:12.5px;margin:10px 0}
+  .flag{cursor:pointer;font-size:16px}
+  .toolbar-right{margin-left:auto;display:flex;gap:8px;align-items:center}
+  footer{padding:18px 22px;color:var(--muted);font-size:12px;text-align:center}
+</style>
+</head>
+<body>
+<header class="app">
+  <h1>Transcure · SEO Lead Tracker</h1>
+  <span class="pill">Prototype · CRM-only · local</span>
+  <span class="pill" id="countPill">0 leads</span>
+  <nav class="tabs">
+    <button data-tab="dashboard" class="active">Dashboard</button>
+    <button data-tab="leads">Leads</button>
+    <button data-tab="funnel">SEO Funnel</button>
+    <button data-tab="upload">Upload</button>
+  </nav>
+</header>
+
+<main>
+  <!-- DASHBOARD -->
+  <section class="view active" id="view-dashboard">
+    <div id="emptyDash" class="card" style="text-align:center;padding:40px">
+      <p class="muted">No data yet. Go to <b>Upload</b> and drop your Zoho CRM export CSV.</p>
+      <button class="btn" onclick="showTab('upload')">Upload CRM export</button>
+    </div>
+    <div id="dashContent" style="display:none">
+      <div class="controls">
+        <label class="small muted">High-ticket if Monthly Collections ≥ $</label>
+        <input type="number" id="htThreshold" style="width:130px" />
+        <button class="btn ghost" onclick="applyThreshold()">Apply</button>
+        <div class="toolbar-right small muted" id="lastImport"></div>
+      </div>
+      <div class="grid kpis" id="kpis"></div>
+      <h2 class="section">Monthly performance (grouped by PK submission date)</h2>
+      <div class="card" style="padding:0">
+        <div class="tablewrap" style="max-height:none">
+          <table id="monthlyTable"></table>
+        </div>
+      </div>
+      <div class="grid" style="grid-template-columns:1fr 1fr;align-items:start">
+        <div>
+          <h2 class="section">Lead source breakdown</h2>
+          <div class="card"><div id="sourceBreak"></div></div>
+        </div>
+        <div>
+          <h2 class="section">Specialty breakdown</h2>
+          <div class="card" style="padding:0"><div class="tablewrap" style="max-height:420px"><div id="specialtyBreak"></div></div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- LEADS -->
+  <section class="view" id="view-leads">
+    <div class="controls">
+      <input type="text" id="search" placeholder="Search name, practice, email…" style="min-width:240px" oninput="renderLeads()" />
+      <select id="fMonth" onchange="drillOff()"></select>
+      <select id="fSource" onchange="drillOff()"></select>
+      <select id="fStage" onchange="drillOff()"></select>
+      <label class="small muted"><input type="checkbox" id="fHigh" onchange="drillOff()" /> High-ticket only</label>
+      <label class="small muted"><input type="checkbox" id="fWrap" onchange="toggleWrap()" /> Wrap text</label>
+      <button class="btn ghost" onclick="resetLayout()" style="padding:6px 12px">Reset layout</button>
+      <div class="toolbar-right small muted" id="leadsCount"></div>
+    </div>
+    <div id="drillBanner" class="note" style="display:none"></div>
+    <div class="card" style="padding:0">
+      <div class="tablewrap"><table id="leadsTable"></table></div>
+    </div>
+    <p class="small muted" style="margin-top:8px">Times shown as <b>PK (Asia/Karachi)</b> with <span class="us">US Chicago</span> beneath. Ticket size, High-ticket flag and Notes are editable and saved on this device; they survive re-uploads (matched by Record Id).</p>
+  </section>
+
+  <!-- FUNNEL -->
+  <section class="view" id="view-funnel">
+    <div class="controls">
+      <select id="funMonth" onchange="renderFunnel()"></select>
+      <select id="funSource" onchange="renderFunnel()"></select>
+    </div>
+    <div class="grid" style="grid-template-columns:1fr 1fr;align-items:start">
+      <div class="card">
+        <h2 class="section">Funnel stages</h2>
+        <div id="funnelBars"></div>
+        <p class="small muted" style="margin-top:10px">A lead counts as a <b>Demo</b> if its current stage is Demo, Audit, Negotiation or Won. Lost leads are excluded from demo counts (current status can't confirm a past demo) — refine via manual status later.</p>
+      </div>
+      <div class="card">
+        <h2 class="section">Conversion ratios</h2>
+        <div id="funnelRatios"></div>
+        <h2 class="section">Top first-visited pages (SEO)</h2>
+        <div id="topPages"></div>
+      </div>
+    </div>
+    <h2 class="section">Monthly ratios</h2>
+    <div class="card" style="padding:0"><div class="tablewrap" style="max-height:none"><table id="funnelMonthly"></table></div></div>
+  </section>
+
+  <!-- UPLOAD -->
+  <section class="view" id="view-upload">
+    <div class="card">
+      <h2 class="section">Upload Zoho CRM export</h2>
+      <div class="note">Re-uploading a newer export <b>updates existing leads by Record Id</b> and adds new ones — no duplicates. Your manual edits (ticket size, High-ticket, notes) are preserved.</div>
+      <div id="drop" class="drop">
+        <p style="font-size:16px;margin:0 0 6px"><b>Drop CSV here</b> or click to choose</p>
+        <p class="small muted" style="margin:0">Expects the Zoho Leads export (the file with a <code>Record Id</code> column).</p>
+        <input type="file" id="file" accept=".csv" style="display:none" />
+      </div>
+      <div id="importResult" style="margin-top:14px"></div>
+      <div style="margin-top:18px;display:flex;gap:10px">
+        <button class="btn ghost" onclick="exportEnriched()">Export enriched CSV</button>
+        <button class="btn warn" onclick="wipeAll()">Clear all data</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>Transcure SEO Lead Tracker — local prototype. Data stays in this browser (localStorage). CST↔PK via your browser's IANA timezone engine.</footer>
+
+<script>
+/* ============================ Config ============================ */
+const SRC_ZONE='America/Chicago';   // CRM (CST/CDT)
+const PK_ZONE ='Asia/Karachi';      // tracking timezone (UTC+5)
+const LS_LEADS='transcure_leads_v1';
+const LS_MANUAL='transcure_manual_v1';
+const LS_META='transcure_meta_v1';
+const DEFAULT_HT=50000;  // high-ticket if Monthly Collections >= this ($/month)
+
+const FUNNEL_ORDER=['Lead','Engaged','Demo','Audit','Negotiation','Won','Lost'];
+const STAGE_COLOR={Lead:'#94a3b8',Engaged:'#3b82f6',Demo:'#6366f1',Audit:'#16a34a',Negotiation:'#0891b2',Won:'#15803d',Lost:'#dc2626'};
+// Map real Zoho "Lead Status" values -> funnel stage
+const STATUS_MAP={
+  'contacted':'Engaged','attempted to contact':'Engaged','follow up':'Engaged','contact in future':'Engaged',
+  'demo scheduled':'Demo','demo completed':'Demo','demo done':'Demo',
+  'under audit':'Audit',
+  'agreement sent':'Negotiation','contract sent':'Negotiation',
+  'won lead':'Won','won':'Won',
+  'lost lead':'Lost','lost / contract lead':'Lost','not-qualified':'Lost','not qualified':'Lost','junk lead':'Lost'
+};
+function stageFor(status){
+  const k=(status||'').trim().toLowerCase();
+  return STATUS_MAP[k]||'Lead';
+}
+const stageIdx=s=>FUNNEL_ORDER.indexOf(s);
+const isDemo=s=>{const i=stageIdx(s);return i>=stageIdx('Demo')&&i<=stageIdx('Won');};
+const isWon=s=>s==='Won';
+
+/* ============================ State ============================ */
+let LEADS={};     // recordId -> lead object (CRM fields + computed)
+let MANUAL={};    // recordId -> {ticket, high(true/false/null), notes}
+let META={threshold:DEFAULT_HT,lastImport:null};
+let sortKey='createdMs', sortDir=-1;
+const LS_LAYOUT='transcure_layout_v2';
+const DEFAULT_W=[180,150,120,85,90,135,95,165,95,46,240]; // px per column, matches COLS
+let colWidths={}, rowHeights={}, wrapOn=false;
+
+/* ============================ CSV parser (RFC4180) ============================ */
+function parseCSV(text){
+  if(text.charCodeAt(0)===0xFEFF) text=text.slice(1);
+  const rows=[];let row=[],field='',inQ=false,i=0;
+  while(i<text.length){
+    const c=text[i];
+    if(inQ){
+      if(c==='"'){ if(text[i+1]==='"'){field+='"';i+=2;continue;} inQ=false;i++;continue; }
+      field+=c;i++;continue;
+    }
+    if(c==='"'){inQ=true;i++;continue;}
+    if(c===','){row.push(field);field='';i++;continue;}
+    if(c==='\r'){i++;continue;}
+    if(c==='\n'){row.push(field);rows.push(row);row=[];field='';i++;continue;}
+    field+=c;i++;
+  }
+  if(field!==''||row.length){row.push(field);rows.push(row);}
+  return rows;
+}
+function rowsToObjects(rows){
+  if(!rows.length) return [];
+  const head=rows[0].map(h=>h.trim());
+  return rows.slice(1)
+    .filter(r=>r.some(c=>c&&c.trim()!==''))
+    .map(r=>{const o={};head.forEach((h,i)=>o[h]=(r[i]!==undefined?r[i]:''));return o;});
+}
+
+/* ============================ Timezone (Intl-based, DST-correct) ============================ */
+function zoneOffsetMs(timeZone,date){
+  const dtf=new Intl.DateTimeFormat('en-US',{timeZone,hourCycle:'h23',
+    year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  const p={};dtf.formatToParts(date).forEach(x=>p[x.type]=x.value);
+  const asUTC=Date.UTC(+p.year,+p.month-1,+p.day,+p.hour,+p.minute,+p.second);
+  return asUTC-date.getTime();
+}
+// Interpret "YYYY-MM-DD HH:mm:ss" as wall time in SRC_ZONE -> JS Date (UTC instant)
+function parseSourceTime(str){
+  if(!str) return null;
+  const s=String(str).trim();
+  let Y,Mo,D,H,Mi,S=0,ap=null,m;
+  if((m=s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})[ T](\d{1,2}):(\d{1,2})(?::(\d{1,2}))?/))){ // ISO: 2025-10-10 08:27:31
+    Y=+m[1];Mo=+m[2];D=+m[3];H=+m[4];Mi=+m[5];S=+(m[6]||0);
+  } else if((m=s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})[ T,]+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?\s*([AP]M)?/i))){ // US: 10/10/2025 8:27
+    Mo=+m[1];D=+m[2];Y=+m[3];H=+m[4];Mi=+m[5];S=+(m[6]||0);ap=m[7];
+    if(Y<100)Y+=2000;
+    if(ap){const pm=/p/i.test(ap);if(pm&&H<12)H+=12;if(!pm&&H===12)H=0;}
+  } else return null;
+  const naive=Date.UTC(Y,Mo-1,D,H,Mi,S);
+  let off=zoneOffsetMs(SRC_ZONE,new Date(naive));
+  let utc=naive-off;
+  off=zoneOffsetMs(SRC_ZONE,new Date(utc));   // refine across DST edges
+  utc=naive-off;
+  return new Date(utc);
+}
+function fmtInZone(date,timeZone,withTime=true){
+  if(!date) return '';
+  const opt={timeZone,year:'numeric',month:'2-digit',day:'2-digit'};
+  if(withTime){opt.hour='2-digit';opt.minute='2-digit';opt.hourCycle='h23';}
+  const p={};new Intl.DateTimeFormat('en-GB',opt).formatToParts(date).forEach(x=>p[x.type]=x.value);
+  let s=`${p.year}-${p.month}-${p.day}`;
+  if(withTime)s+=` ${p.hour}:${p.minute}`;
+  return s;
+}
+function monthKeyInZone(date,timeZone){
+  if(!date) return {key:'unknown',label:'Unknown date'};
+  const p={};new Intl.DateTimeFormat('en-GB',{timeZone,year:'numeric',month:'2-digit'}).formatToParts(date).forEach(x=>p[x.type]=x.value);
+  const key=`${p.year}-${p.month}`;
+  const label=new Intl.DateTimeFormat('en-US',{timeZone,year:'numeric',month:'long'}).format(date);
+  return {key,label};
+}
+
+/* ============================ Build lead object ============================ */
+function num(v){ if(v==null)return null; const n=parseFloat(String(v).replace(/[^0-9.\-]/g,'')); return isNaN(n)?null:n; }
+const _MON={jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12};
+function fixRange(v){ // undo Excel date-mangling of ranges like "2-5" -> "5-Feb"
+  if(!v) return '';
+  v=String(v).trim(); let m;
+  if((m=v.match(/^(\d{1,2})-([A-Za-z]{3})$/)) && _MON[m[2].toLowerCase()]) return _MON[m[2].toLowerCase()]+'-'+(+m[1]); // 5-Feb -> 2-5
+  if((m=v.match(/^([A-Za-z]{3})-(\d{1,2})$/)) && _MON[m[1].toLowerCase()]) return _MON[m[1].toLowerCase()]+'-'+(+m[2]); // Feb-5 -> 2-5
+  return v;
+}
+function stripHtml(s){ // Zoho Comments come as HTML — flatten to readable text
+  if(!s) return '';
+  return String(s)
+    .replace(/<\s*(br|\/p|\/li|\/div|\/tr)\s*\/?>/gi,' • ')
+    .replace(/<[^>]*>/g,'')
+    .replace(/&nbsp;/gi,' ').replace(/&amp;/gi,'&').replace(/&quot;/gi,'"')
+    .replace(/&lt;/gi,'<').replace(/&gt;/gi,'>').replace(/&#3?9;|&apos;/gi,"'")
+    .replace(/(\s*•\s*)+/g,' • ').replace(/\s+/g,' ').replace(/^\s*•\s*/,'').trim();
+}
+function buildLead(row){
+  const id=row['Record Id']||'';
+  const created=parseSourceTime(row['Created Time']);
+  const modified=parseSourceTime(row['Modified Time']);
+  const mk=monthKeyInZone(created,PK_ZONE);
+  const status=row['Lead Status']||'';
+  const stage=stageFor(status);
+  const name=(row['Lead Name']||`${row['First Name']||''} ${row['Last Name']||''}`).trim()||'(no name)';
+  return {
+    id, name,
+    email:row['Email']||row['Secondary Email']||'',
+    phone:row['Phone']||row['Mobile']||'',
+    owner:row['Lead Owner']||'',
+    source:(row['Lead Source']||'').trim()||'(blank)',
+    status, stage,
+    tag:row['Tag']||'',
+    specialty:(row['Specialty']||row['Industry']||'').trim(),
+    practice:(row['Practice Name']||row['Company']||'').trim(),
+    physicians:fixRange(row['Number of Physicians']||''),
+    monthlyCollections:num(row['Monthly Collections']), // Zoho "Monthly Collections" = lead ticket size
+    firstPage:row['First Page Visited']||'',
+    referrer:row['Referrer']||'',
+    message:row['Message']||row['Description']||'',
+    comments:stripHtml(row['Comments']||''), // CRM Comments = notes
+    phase:row['Lead Phases']||'',
+    createdMs:created?created.getTime():0,
+    createdDate:created,
+    modifiedDate:modified,
+    createdPK:fmtInZone(created,PK_ZONE),
+    createdUS:fmtInZone(created,SRC_ZONE),
+    monthKey:mk.key, monthLabel:mk.label
+  };
+}
+function ticketValue(lead){ // effective ticket: manual override wins, else CRM Monthly Collections
+  const m=MANUAL[lead.id];
+  if(m&&m.ticket!=null&&String(m.ticket).trim()!==''){const n=num(m.ticket);if(n!=null)return n;}
+  return lead.monthlyCollections;
+}
+function highTicket(lead){
+  const m=MANUAL[lead.id];
+  if(m&&m.high===true) return true;
+  if(m&&m.high===false) return false;
+  const v=ticketValue(lead);
+  return v!=null && v>=META.threshold;
+}
+function fmtMoney(n){ return n==null?'':'$'+Math.round(n).toLocaleString('en-US'); }
+function effectiveNotes(lead){ // manual note overrides; otherwise CRM Comments
+  const m=MANUAL[lead.id];
+  if(m&&m.notes!=null&&String(m.notes).trim()!=='') return m.notes;
+  return lead.comments||'';
+}
+
+/* ============================ Persistence ============================ */
+function save(){
+  localStorage.setItem(LS_LEADS,JSON.stringify(rawLeadStore));
+  localStorage.setItem(LS_MANUAL,JSON.stringify(MANUAL));
+  localStorage.setItem(LS_META,JSON.stringify(META));
+}
+let rawLeadStore={}; // recordId -> original row (so we can recompute on threshold change)
+function load(){
+  try{rawLeadStore=JSON.parse(localStorage.getItem(LS_LEADS)||'{}')}catch(e){rawLeadStore={}}
+  try{MANUAL=JSON.parse(localStorage.getItem(LS_MANUAL)||'{}')}catch(e){MANUAL={}}
+  try{META=Object.assign({threshold:DEFAULT_HT,lastImport:null},JSON.parse(localStorage.getItem(LS_META)||'{}'))}catch(e){META={threshold:DEFAULT_HT}}
+  try{const o=JSON.parse(localStorage.getItem(LS_LAYOUT)||'{}');colWidths=o.col||{};rowHeights=o.row||{};wrapOn=!!o.wrap;}catch(e){}
+  recompute();
+}
+function recompute(){
+  LEADS={};
+  Object.values(rawLeadStore).forEach(row=>{const l=buildLead(row);if(l.id)LEADS[l.id]=l;});
+}
+
+/* ============================ Import ============================ */
+function handleFile(f){
+  const reader=new FileReader();
+  reader.onload=e=>{
+    const objs=rowsToObjects(parseCSV(e.target.result));
+    if(!objs.length||!('Record Id' in objs[0])){
+      document.getElementById('importResult').innerHTML='<div class="note" style="background:#fee2e2;border-color:#fca5a5;color:#991b1b">That file has no <b>Record Id</b> column — is it the Zoho Leads export?</div>';
+      return;
+    }
+    let ins=0,upd=0;
+    objs.forEach(row=>{
+      const id=row['Record Id']; if(!id)return;
+      if(rawLeadStore[id])upd++; else ins++;
+      rawLeadStore[id]=row;
+    });
+    META.lastImport=new Date().toISOString();
+    recompute();save();refreshAll();
+    document.getElementById('importResult').innerHTML=
+      `<div class="note" style="background:#ecfdf5;border-color:#6ee7b7;color:#065f46">Imported <b>${objs.length}</b> rows · <b>${ins}</b> new · <b>${upd}</b> updated. Total leads: <b>${Object.keys(LEADS).length}</b>.</div>`;
+    showTab('dashboard');
+  };
+  reader.readAsText(f);
+}
+
+/* ============================ Rendering helpers ============================ */
+const pct=(a,b)=>b?((a/b)*100).toFixed(1)+'%':'—';
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function leadList(){return Object.values(LEADS);}
+
+/* ---- drill-down: click a dashboard metric -> see those leads ---- */
+let DRILLS=[], drill=null;
+function dpush(label,test){DRILLS.push({label,test});return DRILLS.length-1;}
+function runDrill(i){
+  drill=DRILLS[i]; if(!drill)return;
+  ['fMonth','fSource','fStage'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});
+  const fh=document.getElementById('fHigh'); if(fh)fh.checked=false;
+  const sb=document.getElementById('search'); if(sb)sb.value='';
+  showTab('leads'); renderLeads();
+}
+function drillOff(){drill=null;renderLeads();}
+
+function refreshAll(){
+  document.getElementById('countPill').textContent=Object.keys(LEADS).length+' leads';
+  document.getElementById('htThreshold').value=META.threshold;
+  buildFilters();
+  renderDashboard();renderLeads();renderFunnel();
+}
+
+/* ============================ Dashboard ============================ */
+function renderDashboard(){
+  const all=leadList();
+  const has=all.length>0;
+  document.getElementById('emptyDash').style.display=has?'none':'block';
+  document.getElementById('dashContent').style.display=has?'block':'none';
+  if(!has)return;
+  if(META.lastImport)document.getElementById('lastImport').textContent='Last import: '+fmtInZone(new Date(META.lastImport),PK_ZONE)+' PK';
+  DRILLS=[]; // rebuild drill registry each render
+  const specKey=l=>(l.specialty||'').trim()||'(unspecified)';
+  const demos=all.filter(l=>isDemo(l.stage)).length;
+  const wons=all.filter(l=>isWon(l.stage)).length;
+  const ht=all.filter(highTicket).length;
+  const seo=all.filter(l=>l.source.toLowerCase()==='seo').length;
+  const wonMonthly=all.filter(l=>isWon(l.stage)).reduce((s,l)=>s+(ticketValue(l)||0),0);
+  const kpis=[
+    ['Total leads',all.length,'',dpush('All leads',()=>true)],
+    ['SEO leads',seo,pct(seo,all.length)+' of all',dpush('SEO leads',l=>l.source.toLowerCase()==='seo')],
+    ['Demos',demos,pct(demos,all.length)+' of leads',dpush('Demos (reached demo+)',l=>isDemo(l.stage))],
+    ['Sales (Won)',wons,pct(wons,demos)+' of demos',dpush('Sales — Won',l=>isWon(l.stage))],
+    ['Won collections /mo',fmtMoney(wonMonthly),'sum of won tickets',dpush('Won leads',l=>isWon(l.stage))],
+    ['High-ticket',ht,pct(ht,all.length)+' of leads',dpush('High-ticket leads',highTicket)]
+  ];
+  document.getElementById('kpis').innerHTML=kpis.map(k=>
+    `<div class="card kpi clickable" onclick="runDrill(${k[3]})"><div class="label">${k[0]}</div><div class="val">${k[1]}</div><div class="sub">${k[2]}</div></div>`).join('');
+  // monthly (clickable cells)
+  const months=monthlyStats();
+  document.getElementById('monthlyTable').innerHTML=
+    `<thead><tr><th>Month</th><th class="right">Leads</th><th class="right">Demos</th><th class="right">Sales</th><th class="right">High-ticket</th><th class="right">Leads→Demos</th><th class="right">Demos→Sales</th><th class="right">High-ticket %</th></tr></thead><tbody>`+
+    months.map(m=>{
+      const dl=dpush('Leads · '+m.label,l=>l.monthKey===m.key);
+      const dd=dpush('Demos · '+m.label,l=>l.monthKey===m.key&&isDemo(l.stage));
+      const ds=dpush('Sales · '+m.label,l=>l.monthKey===m.key&&isWon(l.stage));
+      const dh=dpush('High-ticket · '+m.label,l=>l.monthKey===m.key&&highTicket(l));
+      return `<tr><td>${m.label}</td>`+
+        `<td class="right link" onclick="runDrill(${dl})">${m.leads}</td>`+
+        `<td class="right link" onclick="runDrill(${dd})">${m.demos}</td>`+
+        `<td class="right link" onclick="runDrill(${ds})">${m.sales}</td>`+
+        `<td class="right link" onclick="runDrill(${dh})">${m.ht}</td>`+
+        `<td class="right">${pct(m.demos,m.leads)}</td><td class="right">${pct(m.sales,m.demos)}</td><td class="right">${pct(m.ht,m.leads)}</td></tr>`;
+    }).join('')+`</tbody>`;
+  // source (clickable rows)
+  const bySrc={};all.forEach(l=>{bySrc[l.source]=(bySrc[l.source]||0)+1});
+  const srcRows=Object.entries(bySrc).sort((a,b)=>b[1]-a[1]);
+  document.getElementById('sourceBreak').innerHTML='<table><thead><tr><th>Source</th><th class="right">Leads</th><th class="right">Share</th></tr></thead><tbody>'+
+    srcRows.map(([s,c])=>{const di=dpush('Source: '+s,l=>l.source===s);
+      return `<tr class="link" onclick="runDrill(${di})"><td>${esc(s)}</td><td class="right">${c}</td><td class="right">${pct(c,all.length)}</td></tr>`;}).join('')+'</tbody>';
+  // specialty breakdown (clickable rows)
+  const sp={};
+  all.forEach(l=>{const key=specKey(l);
+    if(!sp[key])sp[key]={leads:0,demos:0,sales:0,ht:0,coll:0};
+    sp[key].leads++; if(isDemo(l.stage))sp[key].demos++; if(isWon(l.stage))sp[key].sales++;
+    if(highTicket(l))sp[key].ht++; sp[key].coll+=ticketValue(l)||0;});
+  const spRows=Object.entries(sp).sort((a,b)=>b[1].leads-a[1].leads);
+  document.getElementById('specialtyBreak').innerHTML=
+    '<table><thead><tr><th>Specialty</th><th class="right">Leads</th><th class="right">Demos</th><th class="right">Sales</th><th class="right">High</th><th class="right">L→D</th><th class="right">D→S</th></tr></thead><tbody>'+
+    spRows.map(([s,v])=>{
+      const dl=dpush('Specialty: '+s,l=>specKey(l)===s);
+      const dd=dpush('Demos · '+s,l=>specKey(l)===s&&isDemo(l.stage));
+      const ds=dpush('Sales · '+s,l=>specKey(l)===s&&isWon(l.stage));
+      const dh=dpush('High-ticket · '+s,l=>specKey(l)===s&&highTicket(l));
+      return `<tr>`+
+        `<td class="link" onclick="runDrill(${dl})">${esc(s)}</td>`+
+        `<td class="right link" onclick="runDrill(${dl})">${v.leads}</td>`+
+        `<td class="right link" onclick="runDrill(${dd})">${v.demos}</td>`+
+        `<td class="right link" onclick="runDrill(${ds})">${v.sales}</td>`+
+        `<td class="right link" onclick="runDrill(${dh})">${v.ht}</td>`+
+        `<td class="right">${pct(v.demos,v.leads)}</td><td class="right">${pct(v.sales,v.demos)}</td></tr>`;
+    }).join('')+'</tbody>';
+}
+function monthlyStats(filterFn){
+  const map={};
+  leadList().forEach(l=>{
+    if(filterFn&&!filterFn(l))return;
+    const k=l.monthKey;
+    if(!map[k])map[k]={key:k,label:l.monthLabel,leads:0,demos:0,sales:0,ht:0};
+    map[k].leads++;
+    if(isDemo(l.stage))map[k].demos++;
+    if(isWon(l.stage))map[k].sales++;
+    if(highTicket(l))map[k].ht++;
+  });
+  return Object.values(map).sort((a,b)=>a.key<b.key?1:-1); // newest first; 'unknown' floats by string
+}
+
+/* ============================ Filters ============================ */
+function buildFilters(){
+  const all=leadList();
+  const months=[...new Set(all.map(l=>l.monthKey))].map(k=>{const l=all.find(x=>x.monthKey===k);return{k,label:l.monthLabel}}).sort((a,b)=>a.k<b.k?1:-1);
+  const sources=[...new Set(all.map(l=>l.source))].sort();
+  const opt=(v,t)=>`<option value="${esc(v)}">${esc(t)}</option>`;
+  const mOpts='<option value="">All months</option>'+months.map(m=>opt(m.k,m.label)).join('');
+  const sOpts='<option value="">All sources</option>'+sources.map(s=>opt(s,s)).join('');
+  const stOpts='<option value="">All stages</option>'+FUNNEL_ORDER.map(s=>opt(s,s)).join('');
+  ['fMonth','funMonth'].forEach(id=>{const e=document.getElementById(id);const v=e.value;e.innerHTML=mOpts;e.value=v;});
+  ['fSource','funSource'].forEach(id=>{const e=document.getElementById(id);const v=e.value;e.innerHTML=sOpts;e.value=v;});
+  const st=document.getElementById('fStage');const sv=st.value;st.innerHTML=stOpts;st.value=sv;
+}
+
+/* ============================ Leads table ============================ */
+const COLS=[
+  ['name','Name'],['practice','Practice'],['specialty','Specialty'],['physicians','Physicians'],['source','Source'],
+  ['status','Status'],['stage','Stage'],['createdMs','Created (PK / US)'],
+  ['ticket','Ticket $/mo'],['high','High'],['notes','Notes']
+];
+function filteredLeads(){
+  const q=document.getElementById('search').value.toLowerCase().trim();
+  let base;
+  if(drill){ base=leadList().filter(drill.test); }   // drill-down overrides dropdowns
+  else{
+    const fm=document.getElementById('fMonth').value, fs=document.getElementById('fSource').value,
+          fst=document.getElementById('fStage').value, fh=document.getElementById('fHigh').checked;
+    base=leadList().filter(l=>{
+      if(fm&&l.monthKey!==fm)return false;
+      if(fs&&l.source!==fs)return false;
+      if(fst&&l.stage!==fst)return false;
+      if(fh&&!highTicket(l))return false;
+      return true;
+    });
+  }
+  if(q) base=base.filter(l=>(l.name+' '+l.practice+' '+l.email+' '+l.specialty+' '+effectiveNotes(l)).toLowerCase().includes(q));
+  return base;
+}
+function renderLeads(){
+  const rows=filteredLeads();
+  rows.sort((a,b)=>{
+    let va,vb;
+    if(sortKey==='ticket'){va=manualTicketNum(a);vb=manualTicketNum(b);}
+    else if(sortKey==='high'){va=highTicket(a)?1:0;vb=highTicket(b)?1:0;}
+    else{va=a[sortKey];vb=b[sortKey];}
+    if(va==null)va='';if(vb==null)vb='';
+    if(typeof va==='string')va=va.toLowerCase();if(typeof vb==='string')vb=vb.toLowerCase();
+    return va<vb?-1*sortDir:va>vb?1*sortDir:0;
+  });
+  document.getElementById('leadsCount').textContent=rows.length+' shown';
+  const banner=document.getElementById('drillBanner');
+  if(drill){banner.style.display='block';banner.innerHTML=`Showing <b>${esc(drill.label)}</b> — ${rows.length} lead(s). <a onclick="drillOff()">Show all leads</a>`;}
+  else banner.style.display='none';
+  const head='<thead><tr>'+COLS.map(c=>`<th class="sortable" onclick="setSort('${c[0]}')">${c[1]}${sortKey===c[0]?(sortDir>0?' ▲':' ▼'):''}</th>`).join('')+'</tr></thead>';
+  const body='<tbody>'+rows.map(l=>{
+    const m=MANUAL[l.id]||{};
+    return `<tr data-id="${l.id}"${rowHeights[l.id]?` style="height:${rowHeights[l.id]}px"`:''}>
+      <td><b>${esc(l.name)}</b><div class="small muted">${esc(l.email)}</div></td>
+      <td>${esc(l.practice)}</td>
+      <td>${esc(l.specialty)}</td>
+      <td>${esc(l.physicians)}</td>
+      <td>${esc(l.source)}</td>
+      <td>${esc(l.status)}</td>
+      <td><span class="chip stage-${l.stage}">${l.stage}</span></td>
+      <td class="timecell">${l.createdPK||'—'}<div class="us">${l.createdUS||''} US</div></td>
+      <td><input class="cell" type="text" value="${esc(m.ticket||'')}" placeholder="${l.monthlyCollections!=null?esc(fmtMoney(l.monthlyCollections)):'—'}" title="${l.monthlyCollections!=null?'CRM Monthly Collections: '+fmtMoney(l.monthlyCollections):'no CRM value'}" onchange="setManual('${l.id}','ticket',this.value)"></td>
+      <td class="right"><span class="flag" title="toggle high-ticket" onclick="toggleHigh('${l.id}')">${highTicket(l)?'⭐':'☆'}</span></td>
+      <td class="notes"><textarea class="notecell" rows="1" placeholder="add note…" oninput="autoGrow(this)" onchange="setManual('${l.id}','notes',this.value)">${esc(effectiveNotes(l))}</textarea></td>
+    </tr>`;}).join('')+'</tbody>';
+  const widths=COLS.map((c,i)=>colWidths[i]||DEFAULT_W[i]);
+  const colgroup='<colgroup>'+widths.map(w=>`<col style="width:${w}px">`).join('')+'</colgroup>';
+  const tbl=document.getElementById('leadsTable');
+  tbl.innerHTML=colgroup+head+body;
+  tbl.classList.toggle('wrap',wrapOn);
+  const wc=document.getElementById('fWrap'); if(wc)wc.checked=wrapOn;
+  attachColResizers(tbl); attachRowResizers(tbl); growNotes();
+}
+function manualTicketNum(l){return ticketValue(l)||0;}
+function setSort(k){if(sortKey===k)sortDir*=-1;else{sortKey=k;sortDir=1;}renderLeads();}
+function setManual(id,field,val){MANUAL[id]=MANUAL[id]||{};MANUAL[id][field]=val;save();}
+function toggleHigh(id){
+  MANUAL[id]=MANUAL[id]||{};
+  const cur=MANUAL[id].high;
+  MANUAL[id].high = cur===true?false : cur===false?null : true; // cycle: auto→on→off→auto
+  save();renderLeads();renderDashboard();
+}
+/* ---- resizable columns & rows ---- */
+function autoGrow(el){el.style.height='auto';el.style.height=(el.scrollHeight+2)+'px';}
+function growNotes(){document.querySelectorAll('#leadsTable .notecell').forEach(autoGrow);}
+function saveLayout(){localStorage.setItem(LS_LAYOUT,JSON.stringify({col:colWidths,row:rowHeights,wrap:wrapOn}));}
+function toggleWrap(){wrapOn=document.getElementById('fWrap').checked;document.getElementById('leadsTable').classList.toggle('wrap',wrapOn);saveLayout();}
+function resetLayout(){colWidths={};rowHeights={};saveLayout();renderLeads();}
+function attachColResizers(table){
+  const cols=table.querySelectorAll('colgroup col');
+  table.querySelectorAll('thead th').forEach((th,i)=>{
+    const g=document.createElement('div');g.className='colgrip';
+    g.addEventListener('click',e=>e.stopPropagation());          // don't trigger sort
+    g.addEventListener('mousedown',e=>{
+      e.preventDefault();e.stopPropagation();
+      const startX=e.clientX, col=cols[i], startW=col.getBoundingClientRect().width;
+      const mm=ev=>{const w=Math.max(40,Math.round(startW+ev.clientX-startX));col.style.width=w+'px';colWidths[i]=w;};
+      const mu=()=>{document.removeEventListener('mousemove',mm);document.removeEventListener('mouseup',mu);saveLayout();};
+      document.addEventListener('mousemove',mm);document.addEventListener('mouseup',mu);
+    });
+    th.appendChild(g);
+  });
+}
+function attachRowResizers(table){
+  table.querySelectorAll('tbody tr').forEach(tr=>{
+    const id=tr.dataset.id, cell=tr.firstElementChild; if(!cell)return;
+    const g=document.createElement('div');g.className='rowgrip';
+    g.addEventListener('mousedown',e=>{
+      e.preventDefault();
+      const startY=e.clientY, startH=tr.getBoundingClientRect().height;
+      const mm=ev=>{const h=Math.max(28,Math.round(startH+ev.clientY-startY));tr.style.height=h+'px';if(id)rowHeights[id]=h;};
+      const mu=()=>{document.removeEventListener('mousemove',mm);document.removeEventListener('mouseup',mu);saveLayout();};
+      document.addEventListener('mousemove',mm);document.addEventListener('mouseup',mu);
+    });
+    cell.appendChild(g);
+  });
+}
+
+/* ============================ Funnel ============================ */
+function renderFunnel(){
+  const fm=document.getElementById('funMonth').value, fs=document.getElementById('funSource').value;
+  const ff=l=>(!fm||l.monthKey===fm)&&(!fs||l.source===fs);
+  const all=leadList().filter(ff);
+  const counts={};FUNNEL_ORDER.forEach(s=>counts[s]=0);
+  all.forEach(l=>counts[l.stage]++);
+  const max=Math.max(1,...Object.values(counts));
+  document.getElementById('funnelBars').innerHTML=FUNNEL_ORDER.map(s=>
+    `<div class="funnelbar"><div class="name">${s}</div><div class="bar" style="width:${(counts[s]/max*100)||0}%;background:${STAGE_COLOR[s]}">${counts[s]}</div></div>`).join('');
+  const leads=all.length, demos=all.filter(l=>isDemo(l.stage)).length, sales=all.filter(l=>isWon(l.stage)).length, ht=all.filter(highTicket).length;
+  document.getElementById('funnelRatios').innerHTML=
+    `<table><tbody>
+      <tr><td>Total leads</td><td class="right"><b>${leads}</b></td></tr>
+      <tr><td>Leads → Demos</td><td class="right"><b>${pct(demos,leads)}</b> (${demos})</td></tr>
+      <tr><td>Demos → Sales</td><td class="right"><b>${pct(sales,demos)}</b> (${sales})</td></tr>
+      <tr><td>High-ticket share</td><td class="right"><b>${pct(ht,leads)}</b> (${ht})</td></tr>
+    </tbody></table>`;
+  // top pages
+  const pg={};all.forEach(l=>{const p=(l.firstPage||'(unknown)').replace(/^https?:\/\/[^/]+/,'')||'/';pg[p]=(pg[p]||0)+1;});
+  const top=Object.entries(pg).sort((a,b)=>b[1]-a[1]).slice(0,8);
+  document.getElementById('topPages').innerHTML='<table><tbody>'+top.map(([p,c])=>`<tr><td class="small">${esc(p)}</td><td class="right">${c}</td></tr>`).join('')+'</tbody>';
+  // monthly
+  const months=monthlyStats(ff);
+  document.getElementById('funnelMonthly').innerHTML=
+    `<thead><tr><th>Month</th><th class="right">Leads</th><th class="right">Demos</th><th class="right">Sales</th><th class="right">Leads→Demos</th><th class="right">Demos→Sales</th><th class="right">High-ticket %</th></tr></thead><tbody>`+
+    months.map(m=>`<tr><td>${m.label}</td><td class="right">${m.leads}</td><td class="right">${m.demos}</td><td class="right">${m.sales}</td><td class="right">${pct(m.demos,m.leads)}</td><td class="right">${pct(m.sales,m.demos)}</td><td class="right">${pct(m.ht,m.leads)}</td></tr>`).join('')+`</tbody>`;
+}
+
+/* ============================ Misc actions ============================ */
+function applyThreshold(){const v=num(document.getElementById('htThreshold').value);META.threshold=v||0;save();refreshAll();}
+function exportEnriched(){
+  const rows=leadList().map(l=>{const m=MANUAL[l.id]||{};return {
+    'Record Id':l.id,Name:l.name,Email:l.email,Phone:l.phone,Practice:l.practice,Specialty:l.specialty,
+    Source:l.source,Status:l.status,Stage:l.stage,'Created PK':l.createdPK,'Created US':l.createdUS,
+    'Monthly Collections (CRM)':l.monthlyCollections,'Ticket $/mo (effective)':ticketValue(l),'High Ticket':highTicket(l)?'Yes':'No',Notes:effectiveNotes(l)
+  };});
+  if(!rows.length){alert('No data to export.');return;}
+  const head=Object.keys(rows[0]);
+  const csv=[head.join(',')].concat(rows.map(r=>head.map(h=>{const v=(r[h]==null?'':String(r[h]));return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;}).join(','))).join('\n');
+  const blob=new Blob([csv],{type:'text/csv'});const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);a.download='transcure_enriched_leads.csv';a.click();
+}
+function wipeAll(){if(confirm('Delete all imported data and manual edits from this browser?')){localStorage.removeItem(LS_LEADS);localStorage.removeItem(LS_MANUAL);localStorage.removeItem(LS_META);rawLeadStore={};MANUAL={};META={threshold:DEFAULT_HT};recompute();refreshAll();document.getElementById('importResult').innerHTML='';}}
+
+/* ============================ Tabs / init ============================ */
+function showTab(t){
+  document.querySelectorAll('nav.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab===t));
+  document.querySelectorAll('.view').forEach(v=>v.classList.toggle('active',v.id==='view-'+t));
+  if(t==='leads')growNotes(); // textareas need a visible layout to size correctly
+}
+document.querySelectorAll('nav.tabs button').forEach(b=>b.onclick=()=>showTab(b.dataset.tab));
+(function initUpload(){
+  const drop=document.getElementById('drop'),file=document.getElementById('file');
+  drop.onclick=()=>file.click();
+  file.onchange=e=>{if(e.target.files[0])handleFile(e.target.files[0]);};
+  ['dragenter','dragover'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('drag');}));
+  ['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('drag');}));
+  drop.addEventListener('drop',e=>{if(e.dataTransfer.files[0])handleFile(e.dataTransfer.files[0]);});
+})();
+load();refreshAll();
+</script>
+</body>
+</html>

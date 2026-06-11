@@ -26,18 +26,27 @@ export default function Dashboard() {
     const wonMonthly = leads.filter((l) => isWon(l.stage)).reduce((s, l) => s + (ticketValue(l) || 0), 0)
     const months = monthlyStats(leads, rule)
     const bySrc: Record<string, number> = {}
-    leads.forEach((l) => (bySrc[l.source] = (bySrc[l.source] || 0) + 1))
-    const sp: Record<string, { leads: number; demos: number; sales: number; ht: number }> = {}
+    const bySrcSales: Record<string, { sales: number; coll: number }> = {}
+    leads.forEach((l) => {
+      bySrc[l.source] = (bySrc[l.source] || 0) + 1
+      if (isWon(l.stage)) {
+        if (!bySrcSales[l.source]) bySrcSales[l.source] = { sales: 0, coll: 0 }
+        bySrcSales[l.source].sales++
+        bySrcSales[l.source].coll += ticketValue(l) || 0
+      }
+    })
+    const sp: Record<string, { leads: number; demos: number; sales: number; ht: number; coll: number }> = {}
     leads.forEach((l) => {
       const k = specKey(l)
-      if (!sp[k]) sp[k] = { leads: 0, demos: 0, sales: 0, ht: 0 }
+      if (!sp[k]) sp[k] = { leads: 0, demos: 0, sales: 0, ht: 0, coll: 0 }
       sp[k].leads++
       if (isDemo(l.stage)) sp[k].demos++
-      if (isWon(l.stage)) sp[k].sales++
+      if (isWon(l.stage)) { sp[k].sales++; sp[k].coll += ticketValue(l) || 0 }
       if (isHigh(l, rule)) sp[k].ht++
     })
     return { demos, wons, ht, seo, wonMonthly, months,
       srcRows: Object.entries(bySrc).sort((a, b) => b[1] - a[1]),
+      srcSalesRows: Object.entries(bySrcSales).sort((a, b) => b[1].sales - a[1].sales),
       spRows: Object.entries(sp).sort((a, b) => b[1].leads - a[1].leads) }
   }, [leads, rule])
 
@@ -52,7 +61,8 @@ export default function Dashboard() {
     )
 
   const all = leads
-  const { demos, wons, ht, seo, wonMonthly, months, srcRows, spRows } = stats
+  const { demos, wons, ht, seo, wonMonthly, months, srcRows, srcSalesRows, spRows } = stats
+  const totalWon = wons
   const isSeo = (l: Lead) => l.source.toLowerCase() === 'seo'
 
   const kpis: [string, string | number, string, () => void][] = [
@@ -95,7 +105,7 @@ export default function Dashboard() {
       <div className="card" style={{ padding: 0 }}>
         <div className="tablewrap" style={{ maxHeight: 'none' }}>
           <table>
-            <thead><tr><th>Month</th><th className="right">Leads</th><th className="right">Demos</th><th className="right">Sales</th><th className="right">High-ticket</th><th className="right">Leads→Demos</th><th className="right">Demos→Sales</th><th className="right">High-ticket %</th></tr></thead>
+            <thead><tr><th>Month</th><th className="right">Leads</th><th className="right">Demos</th><th className="right">Sales</th><th className="right">Collections</th><th className="right">High-ticket</th><th className="right">Leads→Demos</th><th className="right">Demos→Sales</th><th className="right">High-ticket %</th></tr></thead>
             <tbody>
               {months.map((m) => (
                 <tr key={m.key}>
@@ -103,6 +113,7 @@ export default function Dashboard() {
                   <td className="right link" onClick={() => go('Leads · ' + m.label, (l) => monthKey(l) === m.key)}>{m.leads}</td>
                   <td className="right link" onClick={() => go('Demos · ' + m.label, (l) => monthKey(l) === m.key && isDemo(l.stage))}>{m.demos}</td>
                   <td className="right link" onClick={() => go('Sales · ' + m.label, (l) => monthKey(l) === m.key && isWon(l.stage))}>{m.sales}</td>
+                  <td className="right" title="Total monthly collections from closed (won) leads">{fmtMoney(m.coll) || '—'}</td>
                   <td className="right link" onClick={() => go('High-ticket · ' + m.label, (l) => monthKey(l) === m.key && isHigh(l, rule))}>{m.ht}</td>
                   <td className="right">{pct(m.demos, m.leads)}</td>
                   <td className="right">{pct(m.sales, m.demos)}</td>
@@ -129,13 +140,29 @@ export default function Dashboard() {
               </tbody>
             </table>
           </div>
+
+          <h2 className="section">Sales by source</h2>
+          <div className="card">
+            <table>
+              <thead><tr><th>Source</th><th className="right">Sales</th><th className="right">Share</th></tr></thead>
+              <tbody>
+                {srcSalesRows.length === 0 ? (
+                  <tr><td colSpan={3} className="muted small">No closed (won) leads yet.</td></tr>
+                ) : srcSalesRows.map(([s, v]) => (
+                  <tr className="link" key={s} onClick={() => go('Won · ' + s, (l) => l.source === s && isWon(l.stage))}>
+                    <td>{s}</td><td className="right">{v.sales}</td><td className="right">{pct(v.sales, totalWon)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
         <div>
           <h2 className="section">Specialty breakdown</h2>
           <div className="card" style={{ padding: 0 }}>
             <div className="tablewrap" style={{ maxHeight: 420 }}>
               <table>
-                <thead><tr><th>Specialty</th><th className="right">Leads</th><th className="right">Demos</th><th className="right">Sales</th><th className="right">High</th><th className="right">L→D</th><th className="right">D→S</th></tr></thead>
+                <thead><tr><th>Specialty</th><th className="right">Leads</th><th className="right">Demos</th><th className="right">Sales</th><th className="right">Collections</th><th className="right">High</th><th className="right">L→D</th><th className="right">D→S</th></tr></thead>
                 <tbody>
                   {spRows.map(([s, v]) => (
                     <tr key={s}>
@@ -143,6 +170,7 @@ export default function Dashboard() {
                       <td className="right link" onClick={() => go('Specialty: ' + s, (l) => specKey(l) === s)}>{v.leads}</td>
                       <td className="right link" onClick={() => go('Demos · ' + s, (l) => specKey(l) === s && isDemo(l.stage))}>{v.demos}</td>
                       <td className="right link" onClick={() => go('Sales · ' + s, (l) => specKey(l) === s && isWon(l.stage))}>{v.sales}</td>
+                      <td className="right" title="Collections from closed (won) leads">{fmtMoney(v.coll) || '—'}</td>
                       <td className="right link" onClick={() => go('High-ticket · ' + s, (l) => specKey(l) === s && isHigh(l, rule))}>{v.ht}</td>
                       <td className="right">{pct(v.demos, v.leads)}</td>
                       <td className="right">{pct(v.sales, v.demos)}</td>

@@ -31,9 +31,16 @@ npm run dev      # http://localhost:5173
 - **Leads** → resize columns/rows, edit Ticket / High-ticket / Notes (saved to the shared DB).
 - **SEO Funnel** → stage funnel, ratios, top landing pages, monthly ratios.
 
-## 6. Deploy (later)
-- Push to GitHub, import into **Vercel**, set the two `VITE_` env vars in Vercel project settings.
-- Add your Vercel URL to Supabase → Authentication → URL Configuration (redirect/site URL).
+## 6. Deploy (Vercel)
+Repo: `seotranscure-ui/leads` (private). Vercel serves private repos free.
+1. **vercel.com** → sign up / log in **with GitHub**.
+2. **Add New → Project** → import the `leads` repo (authorize Vercel for the account if asked).
+3. Configure:
+   - Framework: **Vite** (auto-detected)
+   - **Root Directory: `app`** (click Edit → set to `app`)
+   - Environment Variables: add `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`.
+4. **Deploy** → live at `https://<project>.vercel.app`. Every push to `main` auto-deploys.
+   `vercel.json` provides the SPA rewrite so deep links / refresh work.
 
 ## Notes
 - All times stored as UTC; shown in **PK (Karachi)** and **US (Chicago)** with correct DST.

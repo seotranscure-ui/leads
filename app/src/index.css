@@ -75,8 +75,9 @@ button.btn:disabled{opacity:.5;cursor:default}
 
 /* funnel */
 .funnelbar{display:flex;align-items:center;gap:10px;margin:6px 0}
-.funnelbar .name{width:120px;font-weight:600;font-size:13px}
-.funnelbar .bar{height:26px;border-radius:6px;min-width:2px;display:flex;align-items:center;color:#fff;padding:0 8px;font-size:12px;font-weight:600}
+.funnelbar .name{width:110px;flex:0 0 110px;font-weight:600;font-size:13px}
+.funnelbar .track{flex:1 1 auto;min-width:0}
+.funnelbar .bar{height:26px;border-radius:6px;min-width:24px;max-width:100%;display:flex;align-items:center;justify-content:flex-end;color:#fff;padding:0 8px;font-size:12px;font-weight:700;box-sizing:border-box}
 
 /* upload */
 .drop{border:2px dashed #c5cfdd;border-radius:14px;padding:48px;text-align:center;color:var(--muted);background:#fff;cursor:pointer;transition:.15s}
@@ -101,6 +102,22 @@ button.btn:disabled{opacity:.5;cursor:default}
 .controls.filters{background:#f8fafc;border:1px solid #e3e8f0;border-radius:10px;padding:10px 12px;margin-bottom:12px;gap:8px}
 .controls.filters select,.controls.filters input{font-size:12.5px}
 .controls.filters button:disabled{opacity:.5;cursor:default}
+.controls.filters .datef{display:flex;align-items:center;gap:4px}
+.controls.filters .datef input{padding:6px 8px;border:1px solid #e3e8f0;border-radius:8px}
+/* multi-select */
+.ms{position:relative;display:inline-block}
+.ms-btn{display:inline-flex;align-items:center;gap:6px;max-width:210px;padding:7px 10px;border:1px solid #e3e8f0;border-radius:8px;background:#fff;font-size:12.5px;cursor:pointer;color:#1f2733}
+.ms-btn.active{border-color:#0e7c66;color:#0e7c66;font-weight:600}
+.ms-label{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ms-caret{color:#94a3b8;font-size:10px;margin-left:auto}
+.ms-pop{position:absolute;top:calc(100% + 4px);left:0;z-index:50;background:#fff;border:1px solid #e3e8f0;border-radius:10px;box-shadow:0 8px 24px rgba(16,24,40,.14);min-width:210px;max-width:300px;padding:6px}
+.ms-actions{display:flex;justify-content:space-between;padding:4px 6px 6px;border-bottom:1px solid #eef2f7;margin-bottom:4px}
+.ms-actions a{cursor:pointer;color:#0b6f8a;font-size:12px;font-weight:600}
+.ms-list{max-height:240px;overflow:auto}
+.ms-opt{display:flex;align-items:center;gap:8px;padding:5px 6px;font-size:13px;cursor:pointer;border-radius:6px}
+.ms-opt:hover{background:#f1f5f9}
+.ms-opt span{white-space:normal;word-break:break-word}
+.ms-empty{padding:8px;color:#6b7686;font-size:12px}
 .colgrip{position:absolute;top:0;right:0;width:8px;height:100%;cursor:col-resize;z-index:3}
 .colgrip:hover{background:#94a3b8}
 .rowgrip{position:absolute;left:0;bottom:0;width:100%;height:5px;cursor:row-resize;z-index:1}

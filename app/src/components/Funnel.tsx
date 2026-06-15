@@ -51,7 +51,9 @@ export default function Funnel() {
           {FUNNEL_ORDER.map((s) => (
             <div className="funnelbar" key={s}>
               <div className="name">{s}</div>
-              <div className="bar" style={{ width: (counts[s] / max) * 100 + '%', background: STAGE_COLOR[s] }}>{counts[s]}</div>
+              <div className="track">
+                <div className="bar" style={{ width: (counts[s] / max) * 100 + '%', background: STAGE_COLOR[s] }}>{counts[s]}</div>
+              </div>
             </div>
           ))}
           <p className="small muted" style={{ marginTop: 10 }}>A lead counts as a <b>Demo</b> if its current stage is Demo, Audit, Negotiation or Won. Lost leads are excluded from demo counts.</p>

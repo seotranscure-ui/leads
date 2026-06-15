@@ -3,7 +3,7 @@ import { useAppData } from '../data/AppData'
 import { FUNNEL_ORDER } from '../lib/funnel'
 import { displayName, effectiveNotes, fmtMoney, isHigh, num, ticketValue, type Lead } from '../lib/leads'
 import { fmtInZone, PK_ZONE, SRC_ZONE } from '../lib/time'
-import { monthKey } from '../lib/stats'
+import MultiSelect from './MultiSelect'
 
 const COLS = [
   { key: 'name', label: 'Name', w: 180 },
@@ -28,12 +28,13 @@ function loadLayout(): Layout {
 export default function LeadsPage() {
   const { leads, rule, updateManual, drill, setDrill } = useAppData()
   const [q, setQ] = useState('')
-  const [fMonth, setFMonth] = useState('')
-  const [fSource, setFSource] = useState('')
-  const [fStage, setFStage] = useState('')
-  const [fStatus, setFStatus] = useState('')
-  const [fSpecialty, setFSpecialty] = useState('')
-  const [fPhysicians, setFPhysicians] = useState('')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
+  const [fSource, setFSource] = useState<string[]>([])
+  const [fStage, setFStage] = useState<string[]>([])
+  const [fStatus, setFStatus] = useState<string[]>([])
+  const [fSpecialty, setFSpecialty] = useState<string[]>([])
+  const [fPhysicians, setFPhysicians] = useState<string[]>([])
   const [fTicketMin, setFTicketMin] = useState('')
   const [fTicketMax, setFTicketMax] = useState('')
   const [fHigh, setFHigh] = useState<'all' | 'high' | 'low'>('all')
@@ -48,11 +49,6 @@ export default function LeadsPage() {
 
   const clearDropdownsAndDrill = (cb: () => void) => { setDrill(null); cb() }
 
-  const months = useMemo(() => {
-    const map = new Map<string, string>()
-    leads.forEach((l) => { const k = monthKey(l); if (!map.has(k)) map.set(k, l.created_utc ? new Intl.DateTimeFormat('en-US', { timeZone: PK_ZONE, year: 'numeric', month: 'long' }).format(new Date(l.created_utc)) : 'Unknown date') })
-    return [...map.entries()].sort((a, b) => (a[0] < b[0] ? 1 : -1))
-  }, [leads])
   const sources = useMemo(() => [...new Set(leads.map((l) => l.source))].sort(), [leads])
   const statuses = useMemo(() => [...new Set(leads.map((l) => l.status).filter(Boolean))].sort(), [leads])
   const specialties = useMemo(() => [...new Set(leads.map((l) => (l.specialty || '').trim()).filter(Boolean))].sort(), [leads])
@@ -60,12 +56,12 @@ export default function LeadsPage() {
 
   const rows = useMemo(() => {
     let base = drill ? leads.filter(drill.test) : leads.filter((l) => {
-      if (fMonth && monthKey(l) !== fMonth) return false
-      if (fSource && l.source !== fSource) return false
-      if (fStage && l.stage !== fStage) return false
-      if (fStatus && l.status !== fStatus) return false
-      if (fSpecialty && (l.specialty || '').trim() !== fSpecialty) return false
-      if (fPhysicians && (l.physicians || '') !== fPhysicians) return false
+      if (dateFrom || dateTo) { const d = fmtInZone(l.created_utc, PK_ZONE, false); if (dateFrom && (!d || d < dateFrom)) return false; if (dateTo && (!d || d > dateTo)) return false }
+      if (fSource.length && !fSource.includes(l.source)) return false
+      if (fStage.length && !fStage.includes(l.stage)) return false
+      if (fStatus.length && !fStatus.includes(l.status)) return false
+      if (fSpecialty.length && !fSpecialty.includes((l.specialty || '').trim())) return false
+      if (fPhysicians.length && !fPhysicians.includes(l.physicians || '')) return false
       if (fHigh === 'high' && !isHigh(l, rule)) return false
       if (fHigh === 'low' && isHigh(l, rule)) return false
       const tv = ticketValue(l)
@@ -87,7 +83,7 @@ export default function LeadsPage() {
       }
     }
     return [...base].sort((a, b) => { const va = val(a), vb = val(b); return va < vb ? -sortDir : va > vb ? sortDir : 0 })
-  }, [leads, drill, q, fMonth, fSource, fStage, fStatus, fSpecialty, fPhysicians, fTicketMin, fTicketMax, fHigh, sortKey, sortDir, rule])
+  }, [leads, drill, q, dateFrom, dateTo, fSource, fStage, fStatus, fSpecialty, fPhysicians, fTicketMin, fTicketMax, fHigh, sortKey, sortDir, rule])
 
   const setSort = (k: string) => { if (sortKey === k) setSortDir((d) => -d); else { setSortKey(k); setSortDir(1) } }
 
@@ -120,10 +116,14 @@ export default function LeadsPage() {
   const orNull = (v: string) => (v.trim() === '' ? null : v)
 
   const clearFilters = () => {
-    setDrill(null); setQ(''); setFMonth(''); setFSource(''); setFStage(''); setFStatus('')
-    setFSpecialty(''); setFPhysicians(''); setFTicketMin(''); setFTicketMax(''); setFHigh('all')
+    setDrill(null); setQ(''); setDateFrom(''); setDateTo(''); setFSource([]); setFStage([]); setFStatus([])
+    setFSpecialty([]); setFPhysicians([]); setFTicketMin(''); setFTicketMax(''); setFHigh('all')
   }
-  const activeCount = [q, fMonth, fSource, fStage, fStatus, fSpecialty, fPhysicians, fTicketMin, fTicketMax].filter(Boolean).length + (fHigh !== 'all' ? 1 : 0)
+  const activeCount =
+    [q, dateFrom, dateTo, fTicketMin, fTicketMax].filter(Boolean).length +
+    [fSource, fStage, fStatus, fSpecialty, fPhysicians].filter((a) => a.length).length +
+    (fHigh !== 'all' ? 1 : 0)
+  const pick = (set: (v: string[]) => void) => (v: string[]) => clearDropdownsAndDrill(() => set(v))
 
   return (
     <>
@@ -136,30 +136,13 @@ export default function LeadsPage() {
 
       <div className="controls filters">
         <span className="small muted" style={{ fontWeight: 700 }}>Filters:</span>
-        <select value={fMonth} onChange={(e) => clearDropdownsAndDrill(() => setFMonth(e.target.value))}>
-          <option value="">Month: all</option>
-          {months.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
-        </select>
-        <select value={fSource} onChange={(e) => clearDropdownsAndDrill(() => setFSource(e.target.value))}>
-          <option value="">Source: all</option>
-          {sources.map((s) => <option key={s} value={s}>{s}</option>)}
-        </select>
-        <select value={fStage} onChange={(e) => clearDropdownsAndDrill(() => setFStage(e.target.value))}>
-          <option value="">Stage: all</option>
-          {FUNNEL_ORDER.map((s) => <option key={s} value={s}>{s}</option>)}
-        </select>
-        <select value={fStatus} onChange={(e) => clearDropdownsAndDrill(() => setFStatus(e.target.value))}>
-          <option value="">Status: all</option>
-          {statuses.map((s) => <option key={s} value={s}>{s}</option>)}
-        </select>
-        <select value={fSpecialty} onChange={(e) => clearDropdownsAndDrill(() => setFSpecialty(e.target.value))}>
-          <option value="">Specialty: all</option>
-          {specialties.map((s) => <option key={s} value={s}>{s}</option>)}
-        </select>
-        <select value={fPhysicians} onChange={(e) => clearDropdownsAndDrill(() => setFPhysicians(e.target.value))}>
-          <option value="">Size: all</option>
-          {physiciansOpts.map((s) => <option key={s} value={s}>{s} physicians</option>)}
-        </select>
+        <span className="datef small muted">From <input type="date" value={dateFrom} onChange={(e) => clearDropdownsAndDrill(() => setDateFrom(e.target.value))} /></span>
+        <span className="datef small muted">To <input type="date" value={dateTo} onChange={(e) => clearDropdownsAndDrill(() => setDateTo(e.target.value))} /></span>
+        <MultiSelect label="Source" options={sources} selected={fSource} onChange={pick(setFSource)} />
+        <MultiSelect label="Stage" options={[...FUNNEL_ORDER]} selected={fStage} onChange={pick(setFStage)} />
+        <MultiSelect label="Status" options={statuses} selected={fStatus} onChange={pick(setFStatus)} />
+        <MultiSelect label="Specialty" options={specialties} selected={fSpecialty} onChange={pick(setFSpecialty)} />
+        <MultiSelect label="Size" options={physiciansOpts} selected={fPhysicians} onChange={pick(setFPhysicians)} />
         <input type="number" placeholder="Ticket min $" style={{ width: 115 }} value={fTicketMin} onChange={(e) => clearDropdownsAndDrill(() => setFTicketMin(e.target.value))} />
         <input type="number" placeholder="Ticket max $" style={{ width: 115 }} value={fTicketMax} onChange={(e) => clearDropdownsAndDrill(() => setFTicketMax(e.target.value))} />
         <select value={fHigh} onChange={(e) => clearDropdownsAndDrill(() => setFHigh(e.target.value as 'all' | 'high' | 'low'))}>

@@ -45,7 +45,14 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 
   const updateManual: AppCtx['updateManual'] = async (recordId, patch) => {
     setLeads((prev) => prev.map((l) => (l.record_id === recordId ? { ...l, ...patch } : l)))
-    await saveManual(recordId, patch)
+    try {
+      await saveManual(recordId, patch)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : (e && typeof e === 'object' ? String((e as Record<string, unknown>).message ?? JSON.stringify(e)) : String(e))
+      // Don't let a failed save look successful — tell the user and revert to the DB state.
+      alert('Could not save your change — it was NOT stored.\n\n' + msg + '\n\n(If this mentions a missing column, the Supabase schema needs updating — re-run schema.sql.)')
+      await refresh()
+    }
   }
 
   const updateRule = async (r: HighTicketRule) => {

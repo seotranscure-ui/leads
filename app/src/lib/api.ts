@@ -20,24 +20,33 @@ export async function fetchLeads(): Promise<Lead[]> {
 
 export interface ImportResult { total: number; inserted: number; updated: number }
 
-// Upsert CRM rows by record_id. Only CRM columns are sent, so manual_* are
-// left untouched on existing rows.
+const MANUAL_COLS = 'manual_ticket, manual_high, manual_notes, manual_source_medium, manual_first_landing, manual_second_page, manual_submit_page, manual_search_query, manual_recording'
+const BLANK_MANUAL: Partial<Lead> = {
+  manual_ticket: null, manual_high: null, manual_notes: null,
+  manual_source_medium: null, manual_first_landing: null, manual_second_page: null,
+  manual_submit_page: null, manual_search_query: null, manual_recording: null,
+}
+
+// Upsert CRM rows by record_id. To guarantee an import NEVER wipes manually-entered
+// data, we first read back each existing lead's manual_* fields and merge them into
+// the payload — so the import refreshes CRM columns while re-writing manual data unchanged.
 export async function importLeads(rows: CrmLead[], fileName: string): Promise<ImportResult> {
   const ids = rows.map((r) => r.record_id).filter(Boolean)
-  // Determine which already exist (to report inserted vs updated).
-  const existing = new Set<string>()
+  const manualById = new Map<string, Partial<Lead>>()
   for (let i = 0; i < ids.length; i += 1000) {
     const slice = ids.slice(i, i + 1000)
-    const { data, error } = await supabase.from('leads').select('record_id').in('record_id', slice)
+    const { data, error } = await supabase.from('leads').select(`record_id, ${MANUAL_COLS}`).in('record_id', slice)
     if (error) throw error
-    data?.forEach((d: { record_id: string }) => existing.add(d.record_id))
+    data?.forEach((d) => manualById.set((d as { record_id: string }).record_id, d as Partial<Lead>))
   }
-  const inserted = ids.filter((id) => !existing.has(id)).length
+  const inserted = ids.filter((id) => !manualById.has(id)).length
   const updated = ids.length - inserted
 
-  // Upsert in chunks.
-  for (let i = 0; i < rows.length; i += 500) {
-    const chunk = rows.slice(i, i + 500)
+  // CRM columns come from the file; manual columns are preserved (existing) or null (new lead).
+  const merged = rows.map((r) => ({ ...r, ...BLANK_MANUAL, ...(manualById.get(r.record_id) ?? {}) }))
+
+  for (let i = 0; i < merged.length; i += 500) {
+    const chunk = merged.slice(i, i + 500)
     const { error } = await supabase.from('leads').upsert(chunk, { onConflict: 'record_id' })
     if (error) throw error
   }

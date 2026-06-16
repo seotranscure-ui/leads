@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { useAuth } from '../auth/AuthProvider'
 import { supabaseConfigured } from '../lib/supabase'
+import Logo from './Logo'
 
 export default function Login() {
   const { signIn } = useAuth()
@@ -21,7 +22,8 @@ export default function Login() {
   return (
     <div className="login-wrap">
       <form className="login-card" onSubmit={submit}>
-        <h1>Transcure · Lead Tracker</h1>
+        <div className="login-brand"><Logo size={40} /></div>
+        <h1>SEO Lead Tracker</h1>
         <div className="muted small">Sign in to continue</div>
         {!supabaseConfigured && (
           <div className="note err" style={{ marginTop: 12 }}>

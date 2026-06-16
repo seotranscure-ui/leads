@@ -1,6 +1,7 @@
 import { NavLink, Outlet } from 'react-router-dom'
 import { useAuth } from '../auth/AuthProvider'
 import { useAppData } from '../data/AppData'
+import Logo from './Logo'
 
 export default function Layout() {
   const { user, signOut } = useAuth()
@@ -8,7 +9,8 @@ export default function Layout() {
   return (
     <>
       <header className="app">
-        <h1>Transcure · SEO Lead Tracker</h1>
+        <Logo />
+        <span className="subtitle">SEO Lead Tracker</span>
         <span className="pill">{leads.length} leads</span>
         <nav className="tabs">
           <NavLink to="/" end>Dashboard</NavLink>
@@ -16,7 +18,7 @@ export default function Layout() {
           <NavLink to="/funnel">SEO Funnel</NavLink>
           <NavLink to="/upload">Upload</NavLink>
           <span className="who">{user?.email}</span>
-          <a onClick={() => signOut()} style={{ cursor: 'pointer' }}>Sign out</a>
+          <a className="signout" onClick={() => signOut()}>Sign out</a>
         </nav>
       </header>
       <main>

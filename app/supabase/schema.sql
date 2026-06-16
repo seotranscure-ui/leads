@@ -73,8 +73,12 @@ create table if not exists public.import_batches (
   uploaded_at    timestamptz default now(),
   rows_total     integer,
   rows_inserted  integer,
-  rows_updated   integer
+  rows_updated   integer,
+  rows           jsonb            -- full CRM payload of this import, for re-apply / rollback
 );
+
+-- Patch existing table.
+alter table public.import_batches add column if not exists rows jsonb;
 
 -- ---------------------------------------------------------------------------
 -- app_settings: shared, editable config (e.g. high-ticket threshold).

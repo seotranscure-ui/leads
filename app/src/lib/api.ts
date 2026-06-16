@@ -49,9 +49,39 @@ export async function importLeads(rows: CrmLead[], fileName: string): Promise<Im
     rows_total: rows.length,
     rows_inserted: inserted,
     rows_updated: updated,
+    rows, // store the payload so this version can be re-applied later
   })
 
   return { total: rows.length, inserted, updated }
+}
+
+export interface ImportBatch {
+  id: string
+  file_name: string | null
+  uploaded_at: string
+  rows_total: number | null
+  rows_inserted: number | null
+  rows_updated: number | null
+}
+
+// Import history (lightweight — excludes the heavy rows payload).
+export async function fetchImportBatches(): Promise<ImportBatch[]> {
+  const { data, error } = await supabase
+    .from('import_batches')
+    .select('id, file_name, uploaded_at, rows_total, rows_inserted, rows_updated')
+    .order('uploaded_at', { ascending: false })
+    .limit(100)
+  if (error) throw error
+  return (data ?? []) as ImportBatch[]
+}
+
+// Re-apply a previous import: re-upsert its stored rows (manual_* fields stay intact).
+export async function reapplyBatch(id: string): Promise<ImportResult> {
+  const { data, error } = await supabase.from('import_batches').select('file_name, rows').eq('id', id).single()
+  if (error) throw error
+  const rows = (data?.rows ?? []) as CrmLead[]
+  if (!rows.length) throw new Error('This import has no stored rows to re-apply (it predates version history).')
+  return importLeads(rows, `Re-applied: ${data?.file_name ?? 'import'}`)
 }
 
 // Save the manual enrichment fields for one lead (never overwritten by import).

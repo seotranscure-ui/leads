@@ -1,8 +1,8 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useAppData } from '../data/AppData'
 import { parseCSV, rowsToObjects, toCSV } from '../lib/csv'
 import { csvRowToLead, displayName, effectiveNotes, fmtMoney, isHigh, ticketValue } from '../lib/leads'
-import { importLeads } from '../lib/api'
+import { fetchImportBatches, importLeads, reapplyBatch, type ImportBatch } from '../lib/api'
 import { fmtInZone, PK_ZONE, SRC_ZONE } from '../lib/time'
 
 export default function Upload() {
@@ -11,6 +11,10 @@ export default function Upload() {
   const [drag, setDrag] = useState(false)
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
+  const [batches, setBatches] = useState<ImportBatch[]>([])
+
+  const loadBatches = () => fetchImportBatches().then(setBatches).catch(() => {})
+  useEffect(() => { loadBatches() }, [])
 
   const handleFile = (f: File) => {
     setBusy(true)
@@ -27,6 +31,7 @@ export default function Upload() {
         const crm = objs.map(csvRowToLead).filter((r) => r.record_id)
         const res = await importLeads(crm, f.name)
         await refresh()
+        await loadBatches()
         setMsg({ kind: 'ok', text: `Imported ${res.total} rows · ${res.inserted} new · ${res.updated} updated.` })
       } catch (err) {
         setMsg({ kind: 'err', text: err instanceof Error ? err.message : String(err) })
@@ -35,6 +40,22 @@ export default function Upload() {
       }
     }
     reader.readAsText(f)
+  }
+
+  const reapply = async (b: ImportBatch) => {
+    const when = fmtInZone(b.uploaded_at, PK_ZONE)
+    if (!window.confirm(`Re-apply the import "${b.file_name ?? 'import'}" from ${when} PK?\n\nThis re-upserts that version's ${b.rows_total ?? '?'} rows by Record Id. Your manual edits (ticket, notes, source tracking) are kept. Leads added in later imports are not removed.`)) return
+    setBusy(true); setMsg(null)
+    try {
+      const res = await reapplyBatch(b.id)
+      await refresh()
+      await loadBatches()
+      setMsg({ kind: 'ok', text: `Re-applied ${res.total} rows from "${b.file_name ?? 'import'}" · ${res.updated} updated · ${res.inserted} re-added.` })
+    } catch (err) {
+      setMsg({ kind: 'err', text: err instanceof Error ? err.message : String(err) })
+    } finally {
+      setBusy(false)
+    }
   }
 
   const exportEnriched = () => {
@@ -57,6 +78,7 @@ export default function Upload() {
   }
 
   return (
+    <>
     <div className="card">
       <h2 className="section">Upload Zoho CRM export</h2>
       <div className="note">Re-uploading a newer export <b>updates existing leads by Record Id</b> and adds new ones — no duplicates. Your manual edits (ticket size, High-ticket, notes) are preserved.</div>
@@ -77,5 +99,32 @@ export default function Upload() {
         <button className="btn ghost" onClick={exportEnriched}>Export enriched CSV</button>
       </div>
     </div>
+
+    <h2 className="section">Import history</h2>
+    <div className="card" style={{ padding: 0 }}>
+      <div className="tablewrap" style={{ maxHeight: 360 }}>
+        <table>
+          <thead><tr><th>Imported (PK)</th><th>File</th><th className="right">Rows</th><th className="right">New</th><th className="right">Updated</th><th></th></tr></thead>
+          <tbody>
+            {batches.length === 0 ? (
+              <tr><td colSpan={6} className="muted small" style={{ padding: 14 }}>No imports yet.</td></tr>
+            ) : batches.map((b) => (
+              <tr key={b.id}>
+                <td className="timecell">{fmtInZone(b.uploaded_at, PK_ZONE)}</td>
+                <td>{b.file_name || '—'}</td>
+                <td className="right">{b.rows_total ?? '—'}</td>
+                <td className="right">{b.rows_inserted ?? '—'}</td>
+                <td className="right">{b.rows_updated ?? '—'}</td>
+                <td className="right"><button className="btn ghost" disabled={busy} style={{ padding: '4px 10px' }} onClick={() => reapply(b)}>Re-apply</button></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <p className="small muted" style={{ marginTop: 8 }}>
+      Each import stores its full row set. <b>Re-apply</b> restores that version's CRM data (matched by Record Id); your manual edits are always preserved. It logs a new history entry, so you can move between versions freely.
+    </p>
+    </>
   )
 }

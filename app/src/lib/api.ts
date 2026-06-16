@@ -52,14 +52,19 @@ export async function importLeads(rows: CrmLead[], fileName: string): Promise<Im
   }
 
   const { data: u } = await supabase.auth.getUser()
-  await supabase.from('import_batches').insert({
+  const meta = {
     file_name: fileName,
     uploaded_by: u?.user?.id ?? null,
     rows_total: rows.length,
     rows_inserted: inserted,
     rows_updated: updated,
-    rows, // store the payload so this version can be re-applied later
-  })
+  }
+  // History logging is best-effort — it must never fail the actual import.
+  // If the `rows` column hasn't been migrated yet, fall back to logging without it.
+  try {
+    const { error: be } = await supabase.from('import_batches').insert({ ...meta, rows })
+    if (be) await supabase.from('import_batches').insert(meta)
+  } catch { /* ignore logging failure */ }
 
   return { total: rows.length, inserted, updated }
 }

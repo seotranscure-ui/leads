@@ -5,6 +5,15 @@ import { csvRowToLead, displayName, effectiveNotes, fmtMoney, isHigh, ticketValu
 import { fetchImportBatches, importLeads, reapplyBatch, type ImportBatch } from '../lib/api'
 import { fmtInZone, PK_ZONE, SRC_ZONE } from '../lib/time'
 
+function errMsg(e: unknown): string {
+  if (e instanceof Error) return e.message
+  if (e && typeof e === 'object') {
+    const o = e as Record<string, unknown>
+    return (o.message || o.details || o.hint || o.error_description || JSON.stringify(o)) as string
+  }
+  return String(e)
+}
+
 export default function Upload() {
   const { leads, rule, refresh } = useAppData()
   const fileRef = useRef<HTMLInputElement>(null)
@@ -34,7 +43,7 @@ export default function Upload() {
         await loadBatches()
         setMsg({ kind: 'ok', text: `Imported ${res.total} rows · ${res.inserted} new · ${res.updated} updated.` })
       } catch (err) {
-        setMsg({ kind: 'err', text: err instanceof Error ? err.message : String(err) })
+        setMsg({ kind: 'err', text: errMsg(err) })
       } finally {
         setBusy(false)
       }
@@ -52,7 +61,7 @@ export default function Upload() {
       await loadBatches()
       setMsg({ kind: 'ok', text: `Re-applied ${res.total} rows from "${b.file_name ?? 'import'}" · ${res.updated} updated · ${res.inserted} re-added.` })
     } catch (err) {
-      setMsg({ kind: 'err', text: err instanceof Error ? err.message : String(err) })
+      setMsg({ kind: 'err', text: errMsg(err) })
     } finally {
       setBusy(false)
     }

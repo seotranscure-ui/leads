@@ -108,6 +108,18 @@ export async function saveManual(recordId: string, patch: ManualPatch): Promise<
   if (error) throw error
 }
 
+// Manually add one lead (not from CSV). record_id is caller-generated.
+export async function createLead(lead: Lead): Promise<void> {
+  const { error } = await supabase.from('leads').insert(lead)
+  if (error) throw error
+}
+
+// Permanently delete a lead.
+export async function deleteLead(recordId: string): Promise<void> {
+  const { error } = await supabase.from('leads').delete().eq('record_id', recordId)
+  if (error) throw error
+}
+
 export async function getRule(): Promise<HighTicketRule> {
   const { data } = await supabase.from('app_settings').select('value').eq('key', 'high_ticket_rule').maybeSingle()
   const v = data?.value as unknown

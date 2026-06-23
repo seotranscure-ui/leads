@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
-import { fetchLeads, getRule, saveManual, setRule as setRuleApi } from '../lib/api'
+import { createLead, deleteLead, fetchLeads, getRule, saveManual, setRule as setRuleApi } from '../lib/api'
 import { DEFAULT_RULE, type HighTicketRule, type Lead, type ManualPatch } from '../lib/leads'
 
 export interface Drill { label: string; test: (l: Lead) => boolean }
@@ -11,6 +11,8 @@ interface AppCtx {
   error: string | null
   refresh: () => Promise<void>
   updateManual: (recordId: string, patch: ManualPatch) => Promise<void>
+  addLead: (lead: Lead) => Promise<void>
+  removeLead: (recordId: string) => Promise<void>
   updateRule: (r: HighTicketRule) => Promise<void>
   drill: Drill | null
   setDrill: (d: Drill | null) => void
@@ -55,13 +57,23 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  const addLead = async (lead: Lead) => {
+    await createLead(lead)
+    setLeads((prev) => [lead, ...prev])
+  }
+
+  const removeLead = async (recordId: string) => {
+    await deleteLead(recordId)
+    setLeads((prev) => prev.filter((l) => l.record_id !== recordId))
+  }
+
   const updateRule = async (r: HighTicketRule) => {
     setRule(r)
     await setRuleApi(r)
   }
 
   return (
-    <Ctx.Provider value={{ leads, rule, loading, error, refresh, updateManual, updateRule, drill, setDrill }}>
+    <Ctx.Provider value={{ leads, rule, loading, error, refresh, updateManual, addLead, removeLead, updateRule, drill, setDrill }}>
       {children}
     </Ctx.Provider>
   )

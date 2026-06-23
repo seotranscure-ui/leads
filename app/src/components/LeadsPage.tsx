@@ -4,6 +4,7 @@ import { FUNNEL_ORDER } from '../lib/funnel'
 import { displayName, effectiveNotes, fmtMoney, isHigh, num, ticketValue, type Lead } from '../lib/leads'
 import { fmtInZone, PK_ZONE, SRC_ZONE } from '../lib/time'
 import MultiSelect from './MultiSelect'
+import AddLead from './AddLead'
 
 const COLS = [
   { key: 'name', label: 'Name', w: 180 },
@@ -26,7 +27,7 @@ function loadLayout(): Layout {
 }
 
 export default function LeadsPage() {
-  const { leads, rule, updateManual, drill, setDrill } = useAppData()
+  const { leads, rule, updateManual, removeLead, drill, setDrill } = useAppData()
   const [q, setQ] = useState('')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
@@ -114,6 +115,11 @@ export default function LeadsPage() {
   }
   const toggleOpen = (id: string) => setOpen((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
   const orNull = (v: string) => (v.trim() === '' ? null : v)
+  const del = (l: Lead) => {
+    if (window.confirm(`Delete lead "${displayName(l)}"? This permanently removes it from the database.${l.record_id.startsWith('manual-') ? '' : '\n\nNote: this lead came from a CRM export, so re-importing that file will add it back.'}`)) {
+      removeLead(l.record_id).catch((e) => alert('Delete failed: ' + (e instanceof Error ? e.message : String(e))))
+    }
+  }
 
   const clearFilters = () => {
     setDrill(null); setQ(''); setDateFrom(''); setDateTo(''); setFSource([]); setFStage([]); setFStatus([])
@@ -128,7 +134,8 @@ export default function LeadsPage() {
   return (
     <>
       <div className="controls">
-        <input type="text" placeholder="Search name, practice, email, notes…" style={{ minWidth: 240 }} value={q} onChange={(e) => clearDropdownsAndDrill(() => setQ(e.target.value))} />
+        <AddLead />
+        <input type="text" placeholder="Search name, practice, email, notes…" style={{ minWidth: 220 }} value={q} onChange={(e) => clearDropdownsAndDrill(() => setQ(e.target.value))} />
         <label className="small muted"><input type="checkbox" checked={layout.current.wrap} onChange={toggleWrap} /> Wrap text</label>
         <button className="btn ghost" onClick={resetLayout} style={{ padding: '6px 12px' }}>Reset layout</button>
         <div className="small muted" style={{ marginLeft: 'auto' }}>{rows.length} shown{activeCount ? ` · ${activeCount} filter${activeCount > 1 ? 's' : ''} active` : ''}</div>
@@ -230,6 +237,9 @@ export default function LeadsPage() {
                         <div className="detail-ref small muted">
                           CRM First Page Visited: <b>{l.first_page || '—'}</b> · Referrer: <b>{l.referrer || '—'}</b>
                           {l.manual_recording && <> · <a href={l.manual_recording} target="_blank" rel="noreferrer">open recording ↗</a></>}
+                        </div>
+                        <div className="detail-foot">
+                          <button className="btn warn" style={{ padding: '5px 12px' }} onClick={() => del(l)}>Delete lead</button>
                         </div>
                       </div>
                     </td>

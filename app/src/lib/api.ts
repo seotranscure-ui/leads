@@ -134,3 +134,14 @@ export async function getRule(): Promise<HighTicketRule> {
 export async function setRule(rule: HighTicketRule): Promise<void> {
   await supabase.from('app_settings').upsert({ key: 'high_ticket_rule', value: rule as unknown as object, updated_at: new Date().toISOString() })
 }
+
+// Logo is stored as a data: URL string in app_settings (no Storage bucket needed).
+export async function getLogo(): Promise<string | null> {
+  const { data } = await supabase.from('app_settings').select('value').eq('key', 'logo_data_url').maybeSingle()
+  return typeof data?.value === 'string' ? (data.value as string) : null
+}
+
+export async function setLogo(dataUrl: string | null): Promise<void> {
+  const { error } = await supabase.from('app_settings').upsert({ key: 'logo_data_url', value: dataUrl as unknown as object, updated_at: new Date().toISOString() })
+  if (error) throw error
+}

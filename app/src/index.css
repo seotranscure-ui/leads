@@ -14,6 +14,7 @@ a{color:var(--brand);text-decoration:none}
 a:hover{text-decoration:underline}
 
 /* logo */
+.logo-img{display:block;width:auto;max-width:100%;object-fit:contain}
 .logo{display:inline-flex;align-items:center;gap:10px}
 .logo-mark{display:block;flex:0 0 auto}
 .logo-word{font-weight:700;font-size:22px;letter-spacing:-.3px;line-height:1}
@@ -170,3 +171,4 @@ input.cell:focus{border-color:var(--brand);background:#fff;outline:none}
 .login-card input{width:100%}
 .login-card button{width:100%;margin-top:20px}
 .center-msg{padding:60px;text-align:center;color:var(--muted)}
+.logo-preview{margin-top:14px;padding:20px;border:1px dashed var(--line);border-radius:12px;background:#fff;display:flex;align-items:center;justify-content:center;min-height:84px}

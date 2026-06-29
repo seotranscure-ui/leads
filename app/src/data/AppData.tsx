@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
-import { createLead, deleteLead, fetchLeads, getRule, saveManual, setRule as setRuleApi } from '../lib/api'
+import { createLead, deleteLead, fetchLeads, getLogo, getRule, saveManual, setLogo as setLogoApi, setRule as setRuleApi } from '../lib/api'
 import { DEFAULT_RULE, type HighTicketRule, type Lead, type ManualPatch } from '../lib/leads'
 
 export interface Drill { label: string; test: (l: Lead) => boolean }
@@ -7,6 +7,7 @@ export interface Drill { label: string; test: (l: Lead) => boolean }
 interface AppCtx {
   leads: Lead[]
   rule: HighTicketRule
+  logoUrl: string | null
   loading: boolean
   error: string | null
   refresh: () => Promise<void>
@@ -14,6 +15,7 @@ interface AppCtx {
   addLead: (lead: Lead) => Promise<void>
   removeLead: (recordId: string) => Promise<void>
   updateRule: (r: HighTicketRule) => Promise<void>
+  updateLogo: (dataUrl: string | null) => Promise<void>
   drill: Drill | null
   setDrill: (d: Drill | null) => void
 }
@@ -23,6 +25,7 @@ const Ctx = createContext<AppCtx | undefined>(undefined)
 export function AppDataProvider({ children }: { children: ReactNode }) {
   const [leads, setLeads] = useState<Lead[]>([])
   const [rule, setRule] = useState<HighTicketRule>(DEFAULT_RULE)
+  const [logoUrl, setLogoUrl] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [drill, setDrill] = useState<Drill | null>(null)
@@ -30,9 +33,10 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   const refresh = async () => {
     setLoading(true)
     try {
-      const [l, r] = await Promise.all([fetchLeads(), getRule()])
+      const [l, r, logo] = await Promise.all([fetchLeads(), getRule(), getLogo()])
       setLeads(l)
       setRule(r)
+      setLogoUrl(logo)
       setError(null)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -72,8 +76,13 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     await setRuleApi(r)
   }
 
+  const updateLogo = async (dataUrl: string | null) => {
+    await setLogoApi(dataUrl)
+    setLogoUrl(dataUrl)
+  }
+
   return (
-    <Ctx.Provider value={{ leads, rule, loading, error, refresh, updateManual, addLead, removeLead, updateRule, drill, setDrill }}>
+    <Ctx.Provider value={{ leads, rule, logoUrl, loading, error, refresh, updateManual, addLead, removeLead, updateRule, updateLogo, drill, setDrill }}>
       {children}
     </Ctx.Provider>
   )

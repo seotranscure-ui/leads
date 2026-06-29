@@ -7,6 +7,7 @@ import Dashboard from './components/Dashboard'
 import LeadsPage from './components/LeadsPage'
 import Funnel from './components/Funnel'
 import Upload from './components/Upload'
+import Admin from './components/Admin'
 
 export default function App() {
   const { session, loading } = useAuth()
@@ -22,6 +23,7 @@ export default function App() {
           <Route path="leads" element={<LeadsPage />} />
           <Route path="funnel" element={<Funnel />} />
           <Route path="upload" element={<Upload />} />
+          <Route path="admin" element={<Admin />} />
         </Route>
       </Routes>
     </AppDataProvider>

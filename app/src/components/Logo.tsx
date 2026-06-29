@@ -1,5 +1,7 @@
-// Transcure brand mark (gradient leaf) + two-tone wordmark.
-export default function Logo({ size = 30 }: { size?: number }) {
+// Renders the uploaded Transcure logo (a data: URL from Admin settings) when
+// available; otherwise a branded wordmark fallback.
+export default function Logo({ size = 30, src }: { size?: number; src?: string | null }) {
+  if (src) return <img className="logo-img" src={src} alt="Transcure" style={{ height: size }} />
   return (
     <span className="logo">
       <svg className="logo-mark" width={size} height={size * 1.1} viewBox="0 0 40 44" aria-hidden="true">

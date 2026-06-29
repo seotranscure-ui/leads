@@ -47,6 +47,7 @@ create table if not exists public.leads (
   manual_submit_page   text,
   manual_search_query  text,
   manual_recording     text,
+  manual_charge_pct    numeric,         -- % of collections we charge this lead (default 5)
   manual_updated_by    uuid references auth.users (id),
   manual_updated_at    timestamptz
 );
@@ -58,6 +59,7 @@ alter table public.leads add column if not exists manual_second_page   text;
 alter table public.leads add column if not exists manual_submit_page   text;
 alter table public.leads add column if not exists manual_search_query  text;
 alter table public.leads add column if not exists manual_recording     text;
+alter table public.leads add column if not exists manual_charge_pct    numeric;
 
 create index if not exists leads_created_idx  on public.leads (created_utc);
 create index if not exists leads_stage_idx    on public.leads (stage);

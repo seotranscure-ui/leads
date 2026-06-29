@@ -1,7 +1,7 @@
 import { Fragment, useMemo, useReducer, useRef, useState, type MouseEvent as RMouseEvent } from 'react'
 import { useAppData } from '../data/AppData'
 import { FUNNEL_ORDER } from '../lib/funnel'
-import { displayName, effectiveNotes, fmtMoney, isHigh, num, ticketValue, type Lead } from '../lib/leads'
+import { chargePct, displayName, effectiveNotes, fmtMoney, isHigh, leadRevenue, num, ticketValue, type Lead } from '../lib/leads'
 import { fmtInZone, PK_ZONE, SRC_ZONE } from '../lib/time'
 import MultiSelect from './MultiSelect'
 import AddLead from './AddLead'
@@ -230,12 +230,16 @@ export default function LeadsPage() {
                           <label>Recording (Hotjar) link
                             <input type="url" defaultValue={l.manual_recording ?? ''} placeholder="https://insights.hotjar.com/…"
                               onBlur={(e) => updateManual(l.record_id, { manual_recording: orNull(e.target.value) })} /></label>
+                          <label>Charge % (default 5)
+                            <input type="number" step="0.1" min="0" defaultValue={l.manual_charge_pct ?? ''} placeholder="5"
+                              onBlur={(e) => updateManual(l.record_id, { manual_charge_pct: e.target.value.trim() === '' ? null : num(e.target.value) })} /></label>
                           <label className="wide">Possible search query
                             <textarea rows={2} defaultValue={l.manual_search_query ?? ''} placeholder="keywords the lead likely searched"
                               onBlur={(e) => updateManual(l.record_id, { manual_search_query: orNull(e.target.value) })} /></label>
                         </div>
                         <div className="detail-ref small muted">
                           CRM First Page Visited: <b>{l.first_page || '—'}</b> · Referrer: <b>{l.referrer || '—'}</b>
+                          {ticketValue(l) != null && <> · Revenue @ {chargePct(l)}%: <b>{fmtMoney(leadRevenue(l))}</b></>}
                           {l.manual_recording && <> · <a href={l.manual_recording} target="_blank" rel="noreferrer">open recording ↗</a></>}
                         </div>
                         <div className="detail-foot">

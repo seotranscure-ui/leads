@@ -38,12 +38,13 @@ export interface Lead {
   manual_submit_page: string | null
   manual_search_query: string | null
   manual_recording: string | null
+  manual_charge_pct: number | null
 }
 
 export type ManualField =
   | 'manual_ticket' | 'manual_high' | 'manual_notes'
   | 'manual_source_medium' | 'manual_first_landing' | 'manual_second_page'
-  | 'manual_submit_page' | 'manual_search_query' | 'manual_recording'
+  | 'manual_submit_page' | 'manual_search_query' | 'manual_recording' | 'manual_charge_pct'
 export type ManualPatch = Partial<Pick<Lead, ManualField>>
 
 // The CRM-owned subset that an import is allowed to write (no manual_* fields).
@@ -159,4 +160,15 @@ export function displayName(l: Lead): string {
 }
 export function fmtMoney(n: number | null | undefined): string {
   return n == null ? '' : '$' + Math.round(n).toLocaleString('en-US')
+}
+
+export const DEFAULT_CHARGE_PCT = 5
+// Our charge rate for a lead — per-lead override, else the 5% default.
+export function chargePct(l: Lead): number {
+  return l.manual_charge_pct != null ? l.manual_charge_pct : DEFAULT_CHARGE_PCT
+}
+// Our revenue from a lead = its monthly collection × charge%. 0 if no collection.
+export function leadRevenue(l: Lead): number {
+  const t = ticketValue(l)
+  return t == null ? 0 : (t * chargePct(l)) / 100
 }

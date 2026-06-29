@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAppData } from '../data/AppData'
 import { parseCSV, rowsToObjects, toCSV } from '../lib/csv'
-import { csvRowToLead, displayName, effectiveNotes, fmtMoney, isHigh, ticketValue } from '../lib/leads'
+import { chargePct, csvRowToLead, displayName, effectiveNotes, fmtMoney, isHigh, leadRevenue, ticketValue } from '../lib/leads'
 import { fetchImportBatches, importLeads, reapplyBatch, type ImportBatch } from '../lib/api'
 import { fmtInZone, PK_ZONE, SRC_ZONE } from '../lib/time'
 
@@ -73,6 +73,7 @@ export default function Upload() {
       Specialty: l.specialty, Physicians: l.physicians, Source: l.source, Status: l.status, Stage: l.stage,
       'Created PK': fmtInZone(l.created_utc, PK_ZONE), 'Created US': fmtInZone(l.created_utc, SRC_ZONE),
       'Monthly Collections (CRM)': l.monthly_collections, 'Ticket $/mo': ticketValue(l),
+      'Charge %': chargePct(l), 'Revenue $/mo': leadRevenue(l),
       'High Ticket': isHigh(l, rule) ? 'Yes' : 'No', Notes: effectiveNotes(l),
       'Source/Medium': l.manual_source_medium, 'First Landing Page': l.manual_first_landing ?? l.first_page,
       '2nd Page': l.manual_second_page, 'Lead Submit Page': l.manual_submit_page,

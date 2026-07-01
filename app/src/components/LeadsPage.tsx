@@ -5,6 +5,7 @@ import { chargePct, displayName, effectiveNotes, fmtMoney, isHigh, leadRevenue, 
 import { fmtInZone, PK_ZONE, SRC_ZONE } from '../lib/time'
 import MultiSelect from './MultiSelect'
 import AddLead from './AddLead'
+import { monthKey } from '../lib/stats'
 
 const COLS = [
   { key: 'name', label: 'Name', w: 180 },
@@ -233,6 +234,9 @@ export default function LeadsPage() {
                           <label>Charge % (default 5)
                             <input type="number" step="0.1" min="0" defaultValue={l.manual_charge_pct ?? ''} placeholder="5"
                               onBlur={(e) => updateManual(l.record_id, { manual_charge_pct: e.target.value.trim() === '' ? null : num(e.target.value) })} /></label>
+                          <label>Revenue month (default {monthKey(l)})
+                            <input type="month" defaultValue={l.manual_revenue_month ?? ''}
+                              onBlur={(e) => updateManual(l.record_id, { manual_revenue_month: orNull(e.target.value) })} /></label>
                           <label className="wide">Possible search query
                             <textarea rows={2} defaultValue={l.manual_search_query ?? ''} placeholder="keywords the lead likely searched"
                               onBlur={(e) => updateManual(l.record_id, { manual_search_query: orNull(e.target.value) })} /></label>

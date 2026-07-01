@@ -20,11 +20,11 @@ export async function fetchLeads(): Promise<Lead[]> {
 
 export interface ImportResult { total: number; inserted: number; updated: number }
 
-const MANUAL_COLS = 'manual_ticket, manual_high, manual_notes, manual_source_medium, manual_first_landing, manual_second_page, manual_submit_page, manual_search_query, manual_recording, manual_charge_pct'
+const MANUAL_COLS = 'manual_ticket, manual_high, manual_notes, manual_source_medium, manual_first_landing, manual_second_page, manual_submit_page, manual_search_query, manual_recording, manual_charge_pct, manual_revenue_month'
 const BLANK_MANUAL: Partial<Lead> = {
   manual_ticket: null, manual_high: null, manual_notes: null,
   manual_source_medium: null, manual_first_landing: null, manual_second_page: null,
-  manual_submit_page: null, manual_search_query: null, manual_recording: null, manual_charge_pct: null,
+  manual_submit_page: null, manual_search_query: null, manual_recording: null, manual_charge_pct: null, manual_revenue_month: null,
 }
 
 // Upsert CRM rows by record_id. To guarantee an import NEVER wipes manually-entered

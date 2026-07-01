@@ -39,12 +39,13 @@ export interface Lead {
   manual_search_query: string | null
   manual_recording: string | null
   manual_charge_pct: number | null
+  manual_revenue_month: string | null
 }
 
 export type ManualField =
   | 'manual_ticket' | 'manual_high' | 'manual_notes'
   | 'manual_source_medium' | 'manual_first_landing' | 'manual_second_page'
-  | 'manual_submit_page' | 'manual_search_query' | 'manual_recording' | 'manual_charge_pct'
+  | 'manual_submit_page' | 'manual_search_query' | 'manual_recording' | 'manual_charge_pct' | 'manual_revenue_month'
 export type ManualPatch = Partial<Pick<Lead, ManualField>>
 
 // The CRM-owned subset that an import is allowed to write (no manual_* fields).

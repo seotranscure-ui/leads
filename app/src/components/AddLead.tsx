@@ -35,7 +35,7 @@ export default function AddLead() {
         created_utc: created, modified_utc: created, raw: null,
         manual_ticket: null, manual_high: null, manual_notes: null,
         manual_source_medium: null, manual_first_landing: null, manual_second_page: null,
-        manual_submit_page: null, manual_search_query: null, manual_recording: null, manual_charge_pct: null,
+        manual_submit_page: null, manual_search_query: null, manual_recording: null, manual_charge_pct: null, manual_revenue_month: null,
       }
       await addLead(lead)
       setF({ ...EMPTY })

@@ -5,16 +5,36 @@ import { monthKeyOf } from './time'
 
 export interface MonthStat { key: string; label: string; leads: number; demos: number; sales: number; ht: number; coll: number; rev: number }
 
+// Build a "Month YYYY" label from a 'YYYY-MM' key (for revenue months with no lead intake).
+function labelForKey(key: string): string {
+  if (key === 'unknown') return 'Unknown date'
+  const [y, m] = key.split('-').map(Number)
+  if (!y || !m) return key
+  return new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', year: 'numeric', month: 'long' }).format(new Date(Date.UTC(y, m - 1, 1)))
+}
+
 export function monthlyStats(leads: Lead[], rule: HighTicketRule, filter?: (l: Lead) => boolean): MonthStat[] {
   const map: Record<string, MonthStat> = {}
+  const bucket = (key: string, label: string) => {
+    if (!map[key]) map[key] = { key, label, leads: 0, demos: 0, sales: 0, ht: 0, coll: 0, rev: 0 }
+    return map[key]
+  }
   for (const l of leads) {
     if (filter && !filter(l)) continue
-    const { key, label } = monthKeyOf(l.created_utc)
-    if (!map[key]) map[key] = { key, label, leads: 0, demos: 0, sales: 0, ht: 0, coll: 0, rev: 0 }
-    map[key].leads++
-    if (isDemo(l.stage)) map[key].demos++
-    if (isWon(l.stage)) { map[key].sales++; map[key].coll += ticketValue(l) || 0; map[key].rev += leadRevenue(l) } // collections & revenue from won leads
-    if (isHigh(l, rule)) map[key].ht++
+    const created = monthKeyOf(l.created_utc)
+    // Lead intake metrics belong to the month the lead came in.
+    const cb = bucket(created.key, created.label)
+    cb.leads++
+    if (isDemo(l.stage)) cb.demos++
+    if (isHigh(l, rule)) cb.ht++
+    // The win (sale + collections + revenue) is recognized in the revenue month (default: created month).
+    if (isWon(l.stage)) {
+      const attrKey = l.manual_revenue_month || created.key
+      const ab = bucket(attrKey, attrKey === created.key ? created.label : labelForKey(attrKey))
+      ab.sales++
+      ab.coll += ticketValue(l) || 0
+      ab.rev += leadRevenue(l)
+    }
   }
   return Object.values(map).sort((a, b) => (a.key < b.key ? 1 : -1))
 }

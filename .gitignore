@@ -6,6 +6,7 @@
 !/PLAN.md
 !/app/
 !/prototype/
+!/mcp-server/
 
 # within the tracked dirs
 node_modules/

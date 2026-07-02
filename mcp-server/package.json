@@ -1,0 +1,24 @@
+{
+  "name": "transcure-leads-mcp-server",
+  "version": "1.0.0",
+  "description": "MCP server exposing Transcure SEO lead data (read-only) to Claude",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": { "transcure-leads-mcp-server": "dist/index.js" },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts"
+  },
+  "engines": { "node": ">=18" },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.6.1",
+    "@supabase/supabase-js": "^2.45.4",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

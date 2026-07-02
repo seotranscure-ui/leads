@@ -131,7 +131,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', alignItems: 'start' }}>
+      <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', alignItems: 'start', marginTop: 28 }}>
         <div>
           <h2 className="section">Lead source breakdown</h2>
           <div className="card">

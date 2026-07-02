@@ -120,3 +120,8 @@ create policy "auth read settings" on public.app_settings
 drop policy if exists "auth write settings" on public.app_settings;
 create policy "auth write settings" on public.app_settings
   for all to authenticated using (true) with check (true);
+
+-- Allow the (pre-login) public to read ONLY the logo row, so the login page can show it.
+drop policy if exists "public read logo" on public.app_settings;
+create policy "public read logo" on public.app_settings
+  for select to anon using (key = 'logo_data_url');

@@ -1,6 +1,7 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { useAuth } from '../auth/AuthProvider'
 import { supabaseConfigured } from '../lib/supabase'
+import { getLogo } from '../lib/api'
 import Logo from './Logo'
 
 export default function Login() {
@@ -9,6 +10,8 @@ export default function Login() {
   const [password, setPassword] = useState('')
   const [err, setErr] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [logo, setLogo] = useState<string | null>(null)
+  useEffect(() => { getLogo().then(setLogo).catch(() => {}) }, [])
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
@@ -22,7 +25,7 @@ export default function Login() {
   return (
     <div className="login-wrap">
       <form className="login-card" onSubmit={submit}>
-        <div className="login-brand"><Logo size={40} /></div>
+        <div className="login-brand"><Logo size={44} src={logo} /></div>
         <h1>SEO Lead Tracker</h1>
         <div className="muted small">Sign in to continue</div>
         {!supabaseConfigured && (

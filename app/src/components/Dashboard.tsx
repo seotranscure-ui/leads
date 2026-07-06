@@ -10,15 +10,26 @@ export default function Dashboard() {
   const { leads, rule, setDrill, loading, error } = useAppData()
   const nav = useNavigate()
 
-  // Period filter — scopes the whole dashboard by lead created date (PK).
+  // Period filter. Lead-intake metrics scope by created date (day granularity);
+  // won money (sales/collections/revenue) scopes by revenue month (month granularity).
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
-  const inRange = (l: Lead): boolean => {
+  const fromMonth = from ? from.slice(0, 7) : ''
+  const toMonth = to ? to.slice(0, 7) : ''
+  const createdIn = (l: Lead): boolean => {
     if (!from && !to) return true
     const d = fmtInZone(l.created_utc, PK_ZONE, false)
     if (!d) return false
     if (from && d < from) return false
     if (to && d > to) return false
+    return true
+  }
+  const revIn = (l: Lead): boolean => {
+    if (!fromMonth && !toMonth) return true
+    const k = revenueMonthKey(l)
+    if (!k || k === 'unknown') return false
+    if (fromMonth && k < fromMonth) return false
+    if (toMonth && k > toMonth) return false
     return true
   }
   const setPeriod = (kind: 'all' | 'thisMonth' | 'last3' | 'thisYear') => {
@@ -33,45 +44,34 @@ export default function Dashboard() {
     else if (kind === 'thisYear') { setFrom(iso(y, 1, 1)); setTo(today) }
   }
 
-  // Drill-downs always respect the active period.
-  const go = (label: string, test: Drill['test']) => { setDrill({ label, test: (l) => inRange(l) && test(l) }); nav('/leads') }
-
-  const scoped = useMemo(() => leads.filter(inRange), [leads, from, to])
+  const go = (label: string, test: Drill['test']) => { setDrill({ label, test }); nav('/leads') }
 
   const stats = useMemo(() => {
-    const demos = scoped.filter((l) => isDemo(l.stage)).length
-    const wons = scoped.filter((l) => isWon(l.stage)).length
-    const ht = scoped.filter((l) => isHigh(l, rule)).length
-    const seo = scoped.filter((l) => l.source.toLowerCase() === 'seo').length
-    const wonMonthly = scoped.filter((l) => isWon(l.stage)).reduce((s, l) => s + (ticketValue(l) || 0), 0)
-    const revenueWon = scoped.filter((l) => isWon(l.stage)).reduce((s, l) => s + leadRevenue(l), 0)
-    const lostRevenue = scoped.filter((l) => !isWon(l.stage) && ticketValue(l) != null).reduce((s, l) => s + leadRevenue(l), 0)
-    const months = monthlyStats(scoped, rule)
+    const createdSet = leads.filter(createdIn)                              // lead-intake basis (created date)
+    const wonSet = leads.filter((l) => isWon(l.stage) && revIn(l))          // won money basis (revenue month)
+    const demos = createdSet.filter((l) => isDemo(l.stage)).length
+    const seo = createdSet.filter((l) => l.source.toLowerCase() === 'seo').length
+    const ht = createdSet.filter((l) => isHigh(l, rule)).length
+    const wonMonthly = wonSet.reduce((s, l) => s + (ticketValue(l) || 0), 0)
+    const revenueWon = wonSet.reduce((s, l) => s + leadRevenue(l), 0)
+    const lostRevenue = createdSet.filter((l) => !isWon(l.stage) && ticketValue(l) != null).reduce((s, l) => s + leadRevenue(l), 0)
+    const months = monthlyStats(leads, rule, { createdIn, wonIn: revIn })
     const bySrc: Record<string, number> = {}
+    createdSet.forEach((l) => { bySrc[l.source] = (bySrc[l.source] || 0) + 1 })
     const bySrcSales: Record<string, { sales: number; coll: number; rev: number }> = {}
-    scoped.forEach((l) => {
-      bySrc[l.source] = (bySrc[l.source] || 0) + 1
-      if (isWon(l.stage)) {
-        if (!bySrcSales[l.source]) bySrcSales[l.source] = { sales: 0, coll: 0, rev: 0 }
-        bySrcSales[l.source].sales++
-        bySrcSales[l.source].coll += ticketValue(l) || 0
-        bySrcSales[l.source].rev += leadRevenue(l)
-      }
+    wonSet.forEach((l) => {
+      if (!bySrcSales[l.source]) bySrcSales[l.source] = { sales: 0, coll: 0, rev: 0 }
+      const g = bySrcSales[l.source]; g.sales++; g.coll += ticketValue(l) || 0; g.rev += leadRevenue(l)
     })
     const sp: Record<string, { leads: number; demos: number; sales: number; ht: number; coll: number; rev: number }> = {}
-    scoped.forEach((l) => {
-      const k = specKey(l)
-      if (!sp[k]) sp[k] = { leads: 0, demos: 0, sales: 0, ht: 0, coll: 0, rev: 0 }
-      sp[k].leads++
-      if (isDemo(l.stage)) sp[k].demos++
-      if (isWon(l.stage)) { sp[k].sales++; sp[k].coll += ticketValue(l) || 0; sp[k].rev += leadRevenue(l) }
-      if (isHigh(l, rule)) sp[k].ht++
-    })
-    return { demos, wons, ht, seo, wonMonthly, revenueWon, lostRevenue, months,
+    const ensureSp = (k: string) => { if (!sp[k]) sp[k] = { leads: 0, demos: 0, sales: 0, ht: 0, coll: 0, rev: 0 }; return sp[k] }
+    createdSet.forEach((l) => { const g = ensureSp(specKey(l)); g.leads++; if (isDemo(l.stage)) g.demos++; if (isHigh(l, rule)) g.ht++ })
+    wonSet.forEach((l) => { const g = ensureSp(specKey(l)); g.sales++; g.coll += ticketValue(l) || 0; g.rev += leadRevenue(l) })
+    return { totalLeads: createdSet.length, demos, wons: wonSet.length, ht, seo, wonMonthly, revenueWon, lostRevenue, months,
       srcRows: Object.entries(bySrc).sort((a, b) => b[1] - a[1]),
       srcSalesRows: Object.entries(bySrcSales).sort((a, b) => b[1].sales - a[1].sales),
       spRows: Object.entries(sp).sort((a, b) => b[1].leads - a[1].leads) }
-  }, [scoped, rule])
+  }, [leads, rule, from, to])
 
   if (loading) return <div className="center-msg">Loading leads…</div>
   if (error) return <div className="note err">{error}</div>
@@ -83,20 +83,20 @@ export default function Dashboard() {
       </div>
     )
 
-  const all = scoped
-  const { demos, wons, ht, seo, wonMonthly, revenueWon, lostRevenue, months, srcRows, srcSalesRows, spRows } = stats
+  const { totalLeads, demos, wons, ht, seo, wonMonthly, revenueWon, lostRevenue, months, srcRows, srcSalesRows, spRows } = stats
   const totalWon = wons
   const isSeo = (l: Lead) => l.source.toLowerCase() === 'seo'
+  const hasData = totalLeads > 0 || wons > 0
 
   const kpis: [string, string | number, string, () => void][] = [
-    ['Total leads', all.length, '', () => go('All leads', () => true)],
-    ['SEO leads', seo, pct(seo, all.length) + ' of all', () => go('SEO leads', isSeo)],
-    ['Demos', demos, pct(demos, all.length) + ' of leads', () => go('Demos (reached demo+)', (l) => isDemo(l.stage))],
-    ['Sales (Won)', wons, pct(wons, demos) + ' of demos', () => go('Sales — Won', (l) => isWon(l.stage))],
-    ['Won collections /mo', fmtMoney(wonMonthly), 'sum of won tickets', () => go('Won leads', (l) => isWon(l.stage))],
-    ['Revenue /mo (won)', fmtMoney(revenueWon), 'our charge % of won collections', () => go('Won leads', (l) => isWon(l.stage))],
-    ['Lost revenue /mo', fmtMoney(lostRevenue), 'charge % of non-won collections', () => go('Non-won leads with a collection', (l) => !isWon(l.stage) && ticketValue(l) != null)],
-    ['High-ticket', ht, pct(ht, all.length) + ' of leads', () => go('High-ticket leads', (l) => isHigh(l, rule))],
+    ['Total leads', totalLeads, 'came in this period', () => go('Leads in period', (l) => createdIn(l))],
+    ['SEO leads', seo, pct(seo, totalLeads) + ' of leads', () => go('SEO leads in period', (l) => createdIn(l) && isSeo(l))],
+    ['Demos', demos, pct(demos, totalLeads) + ' of leads', () => go('Demos (reached demo+)', (l) => createdIn(l) && isDemo(l.stage))],
+    ['Sales (Won)', wons, pct(wons, demos) + ' of demos', () => go('Sales — Won (this period)', (l) => isWon(l.stage) && revIn(l))],
+    ['Won collections /mo', fmtMoney(wonMonthly), 'recognized this period', () => go('Won leads (this period)', (l) => isWon(l.stage) && revIn(l))],
+    ['Revenue /mo (won)', fmtMoney(revenueWon), 'our charge % of won collections', () => go('Won leads (this period)', (l) => isWon(l.stage) && revIn(l))],
+    ['Lost revenue /mo', fmtMoney(lostRevenue), 'charge % of non-won collections', () => go('Non-won leads with a collection', (l) => createdIn(l) && !isWon(l.stage) && ticketValue(l) != null)],
+    ['High-ticket', ht, pct(ht, totalLeads) + ' of leads', () => go('High-ticket leads', (l) => createdIn(l) && isHigh(l, rule))],
   ]
 
   return (
@@ -111,13 +111,16 @@ export default function Dashboard() {
         <span className="datef small muted">To <input type="date" value={to} onChange={(e) => setTo(e.target.value)} /></span>
         {(from || to) && <button className="btn ghost" onClick={() => setPeriod('all')}>Clear</button>}
         <span className="small muted" style={{ marginLeft: 'auto' }}>
-          {from || to ? `${from || '…'} → ${to || '…'} · ` : ''}{scoped.length} of {leads.length} leads
+          {from || to ? `${from || '…'} → ${to || '…'} · ` : ''}{totalLeads} of {leads.length} leads
         </span>
       </div>
       <div className="controls">
-        <span className="small muted">High-ticket: <b>{ruleLabel(rule)}</b> (or manual ⭐) — change in <a onClick={() => nav('/admin')} style={{ cursor: 'pointer' }}>Admin</a></span>
+        <span className="small muted">
+          High-ticket: <b>{ruleLabel(rule)}</b> (or manual ⭐) — change in <a onClick={() => nav('/admin')} style={{ cursor: 'pointer' }}>Admin</a>
+          {(from || to) && <> · Leads by <b>created date</b>; Sales/Collections/Revenue by <b>revenue month</b></>}
+        </span>
       </div>
-      {!scoped.length && <div className="note">No leads created in this period. Adjust the dates or pick <b>All time</b>.</div>}
+      {!hasData && <div className="note">No data in this period. Adjust the dates or pick <b>All time</b>.</div>}
 
       <div className="grid kpis">
         {kpis.map((k, i) => (
@@ -138,12 +141,12 @@ export default function Dashboard() {
               {months.map((m) => (
                 <tr key={m.key}>
                   <td>{m.label}</td>
-                  <td className="right link" onClick={() => go('Leads · ' + m.label, (l) => monthKey(l) === m.key)}>{m.leads}</td>
-                  <td className="right link" onClick={() => go('Demos · ' + m.label, (l) => monthKey(l) === m.key && isDemo(l.stage))}>{m.demos}</td>
-                  <td className="right link" onClick={() => go('Sales · ' + m.label, (l) => isWon(l.stage) && revenueMonthKey(l) === m.key)}>{m.sales}</td>
-                  <td className="right" title="Total monthly collections from closed (won) leads">{fmtMoney(m.coll) || '—'}</td>
+                  <td className="right link" onClick={() => go('Leads · ' + m.label, (l) => createdIn(l) && monthKey(l) === m.key)}>{m.leads}</td>
+                  <td className="right link" onClick={() => go('Demos · ' + m.label, (l) => createdIn(l) && monthKey(l) === m.key && isDemo(l.stage))}>{m.demos}</td>
+                  <td className="right link" onClick={() => go('Sales · ' + m.label, (l) => isWon(l.stage) && revIn(l) && revenueMonthKey(l) === m.key)}>{m.sales}</td>
+                  <td className="right" title="Collections recognized this month (won leads)">{fmtMoney(m.coll) || '—'}</td>
                   <td className="right" title="Our revenue = charge % of won collections">{fmtMoney(m.rev) || '—'}</td>
-                  <td className="right link" onClick={() => go('High-ticket · ' + m.label, (l) => monthKey(l) === m.key && isHigh(l, rule))}>{m.ht}</td>
+                  <td className="right link" onClick={() => go('High-ticket · ' + m.label, (l) => createdIn(l) && monthKey(l) === m.key && isHigh(l, rule))}>{m.ht}</td>
                   <td className="right">{pct(m.demos, m.leads)}</td>
                   <td className="right">{pct(m.sales, m.demos)}</td>
                   <td className="right">{pct(m.ht, m.leads)}</td>
@@ -162,8 +165,8 @@ export default function Dashboard() {
               <thead><tr><th>Source</th><th className="right">Leads</th><th className="right">Share</th></tr></thead>
               <tbody>
                 {srcRows.map(([s, c]) => (
-                  <tr className="link" key={s} onClick={() => go('Source: ' + s, (l) => l.source === s)}>
-                    <td>{s}</td><td className="right">{c}</td><td className="right">{pct(c, all.length)}</td>
+                  <tr className="link" key={s} onClick={() => go('Source: ' + s, (l) => createdIn(l) && l.source === s)}>
+                    <td>{s}</td><td className="right">{c}</td><td className="right">{pct(c, totalLeads)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -178,7 +181,7 @@ export default function Dashboard() {
                 {srcSalesRows.length === 0 ? (
                   <tr><td colSpan={4} className="muted small">No closed (won) leads yet.</td></tr>
                 ) : srcSalesRows.map(([s, v]) => (
-                  <tr className="link" key={s} onClick={() => go('Won · ' + s, (l) => l.source === s && isWon(l.stage))}>
+                  <tr className="link" key={s} onClick={() => go('Won · ' + s, (l) => isWon(l.stage) && revIn(l) && l.source === s)}>
                     <td>{s}</td><td className="right">{v.sales}</td><td className="right">{fmtMoney(v.rev) || '—'}</td><td className="right">{pct(v.sales, totalWon)}</td>
                   </tr>
                 ))}
@@ -195,13 +198,13 @@ export default function Dashboard() {
                 <tbody>
                   {spRows.map(([s, v]) => (
                     <tr key={s}>
-                      <td className="link" onClick={() => go('Specialty: ' + s, (l) => specKey(l) === s)}>{s}</td>
-                      <td className="right link" onClick={() => go('Specialty: ' + s, (l) => specKey(l) === s)}>{v.leads}</td>
-                      <td className="right link" onClick={() => go('Demos · ' + s, (l) => specKey(l) === s && isDemo(l.stage))}>{v.demos}</td>
-                      <td className="right link" onClick={() => go('Sales · ' + s, (l) => specKey(l) === s && isWon(l.stage))}>{v.sales}</td>
+                      <td className="link" onClick={() => go('Specialty: ' + s, (l) => createdIn(l) && specKey(l) === s)}>{s}</td>
+                      <td className="right link" onClick={() => go('Specialty: ' + s, (l) => createdIn(l) && specKey(l) === s)}>{v.leads}</td>
+                      <td className="right link" onClick={() => go('Demos · ' + s, (l) => createdIn(l) && specKey(l) === s && isDemo(l.stage))}>{v.demos}</td>
+                      <td className="right link" onClick={() => go('Sales · ' + s, (l) => isWon(l.stage) && revIn(l) && specKey(l) === s)}>{v.sales}</td>
                       <td className="right" title="Collections from closed (won) leads">{fmtMoney(v.coll) || '—'}</td>
                       <td className="right" title="Our revenue = charge % of won collections">{fmtMoney(v.rev) || '—'}</td>
-                      <td className="right link" onClick={() => go('High-ticket · ' + s, (l) => specKey(l) === s && isHigh(l, rule))}>{v.ht}</td>
+                      <td className="right link" onClick={() => go('High-ticket · ' + s, (l) => createdIn(l) && specKey(l) === s && isHigh(l, rule))}>{v.ht}</td>
                       <td className="right">{pct(v.demos, v.leads)}</td>
                       <td className="right">{pct(v.sales, v.demos)}</td>
                     </tr>

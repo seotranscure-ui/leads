@@ -30,7 +30,7 @@ export default function Funnel() {
   const pg: Record<string, number> = {}
   all.forEach((l) => { const p = (l.first_page || '(unknown)').replace(/^https?:\/\/[^/]+/, '') || '/'; pg[p] = (pg[p] || 0) + 1 })
   const top = Object.entries(pg).sort((a, b) => b[1] - a[1]).slice(0, 10)
-  const monthly = monthlyStats(leads, rule, ff)
+  const monthly = monthlyStats(leads, rule, { createdIn: ff, wonIn: ff })
 
   return (
     <>

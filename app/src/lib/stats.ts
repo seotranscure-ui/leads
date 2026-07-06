@@ -13,22 +13,27 @@ function labelForKey(key: string): string {
   return new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', year: 'numeric', month: 'long' }).format(new Date(Date.UTC(y, m - 1, 1)))
 }
 
-export function monthlyStats(leads: Lead[], rule: HighTicketRule, filter?: (l: Lead) => boolean): MonthStat[] {
+// Optional per-basis filters: `createdIn` gates lead-intake metrics (by created month),
+// `wonIn` gates the won money (by revenue month). Omit either for "include all".
+export interface MonthlyOpts { createdIn?: (l: Lead) => boolean; wonIn?: (l: Lead) => boolean }
+
+export function monthlyStats(leads: Lead[], rule: HighTicketRule, opts?: MonthlyOpts): MonthStat[] {
   const map: Record<string, MonthStat> = {}
   const bucket = (key: string, label: string) => {
     if (!map[key]) map[key] = { key, label, leads: 0, demos: 0, sales: 0, ht: 0, coll: 0, rev: 0 }
     return map[key]
   }
   for (const l of leads) {
-    if (filter && !filter(l)) continue
     const created = monthKeyOf(l.created_utc)
     // Lead intake metrics belong to the month the lead came in.
-    const cb = bucket(created.key, created.label)
-    cb.leads++
-    if (isDemo(l.stage)) cb.demos++
-    if (isHigh(l, rule)) cb.ht++
+    if (!opts?.createdIn || opts.createdIn(l)) {
+      const cb = bucket(created.key, created.label)
+      cb.leads++
+      if (isDemo(l.stage)) cb.demos++
+      if (isHigh(l, rule)) cb.ht++
+    }
     // The win (sale + collections + revenue) is recognized in the revenue month (default: created month).
-    if (isWon(l.stage)) {
+    if (isWon(l.stage) && (!opts?.wonIn || opts.wonIn(l))) {
       const attrKey = l.manual_revenue_month || created.key
       const ab = bucket(attrKey, attrKey === created.key ? created.label : labelForKey(attrKey))
       ab.sales++

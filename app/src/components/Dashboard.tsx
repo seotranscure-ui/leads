@@ -1,20 +1,13 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAppData, type Drill } from '../data/AppData'
 import { isDemo, isWon } from '../lib/funnel'
-import { isHigh, leadRevenue, ruleLabel, ticketValue, fmtMoney, type HighTicketRule, type Lead } from '../lib/leads'
+import { isHigh, leadRevenue, ruleLabel, ticketValue, fmtMoney, type Lead } from '../lib/leads'
 import { monthlyStats, pct, specKey, monthKey, revenueMonthKey } from '../lib/stats'
 
 export default function Dashboard() {
-  const { leads, rule, updateRule, setDrill, loading, error } = useAppData()
+  const { leads, rule, setDrill, loading, error } = useAppData()
   const nav = useNavigate()
-
-  // local rule editor state, synced when the saved rule changes
-  const [op, setOp] = useState<HighTicketRule['op']>(rule.op)
-  const [v1, setV1] = useState(String(rule.value))
-  const [v2, setV2] = useState(String(rule.value2 ?? ''))
-  useEffect(() => { setOp(rule.op); setV1(String(rule.value)); setV2(String(rule.value2 ?? '')) }, [rule])
-  const applyRule = () => updateRule({ op, value: Number(v1) || 0, value2: op === 'between' ? Number(v2) || 0 : undefined })
 
   const go = (label: string, test: Drill['test']) => { setDrill({ label, test }); nav('/leads') }
 
@@ -82,18 +75,7 @@ export default function Dashboard() {
   return (
     <>
       <div className="controls">
-        <label className="small muted">High-ticket rule: Monthly Collections</label>
-        <select value={op} onChange={(e) => setOp(e.target.value as HighTicketRule['op'])}>
-          <option value="gte">≥ (at least)</option>
-          <option value="gt">&gt; (more than)</option>
-          <option value="lte">≤ (at most)</option>
-          <option value="lt">&lt; (less than)</option>
-          <option value="between">between</option>
-        </select>
-        <input type="number" value={v1} onChange={(e) => setV1(e.target.value)} style={{ width: 120 }} placeholder="$" />
-        {op === 'between' && (<><span className="small muted">and</span><input type="number" value={v2} onChange={(e) => setV2(e.target.value)} style={{ width: 120 }} placeholder="$" /></>)}
-        <button className="btn ghost" onClick={applyRule}>Apply</button>
-        <span className="small muted">Current: {ruleLabel(rule)} — or manual ⭐</span>
+        <span className="small muted">High-ticket: <b>{ruleLabel(rule)}</b> (or manual ⭐) — change in <a onClick={() => nav('/admin')} style={{ cursor: 'pointer' }}>Admin</a></span>
       </div>
 
       <div className="grid kpis">

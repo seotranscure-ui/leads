@@ -1,7 +1,8 @@
 import { Fragment, useMemo, useReducer, useRef, useState, type MouseEvent as RMouseEvent } from 'react'
 import { useAppData } from '../data/AppData'
 import { FUNNEL_ORDER } from '../lib/funnel'
-import { chargePct, displayName, effectiveNotes, fmtMoney, isHigh, leadRevenue, num, ticketValue, type Lead } from '../lib/leads'
+import { chargePct, displayName, effectiveNotes, fmtMoney, isHigh, leadExportRow, leadRevenue, num, ticketValue, type Lead } from '../lib/leads'
+import { downloadCSV } from '../lib/csv'
 import { fmtInZone, PK_ZONE, SRC_ZONE } from '../lib/time'
 import MultiSelect from './MultiSelect'
 import AddLead from './AddLead'
@@ -130,6 +131,13 @@ export default function LeadsPage() {
     [q, dateFrom, dateTo, fTicketMin, fTicketMax].filter(Boolean).length +
     [fSource, fStage, fStatus, fSpecialty, fPhysicians].filter((a) => a.length).length +
     (fHigh !== 'all' ? 1 : 0)
+
+  const exportRows = () => {
+    if (!rows.length) return
+    const tag = drill ? drill.label : activeCount ? 'filtered' : 'all'
+    const slug = tag.replace(/[^a-z0-9]+/gi, '_').replace(/^_+|_+$/g, '').toLowerCase() || 'leads'
+    downloadCSV(`transcure_leads_${slug}.csv`, rows.map((l) => leadExportRow(l, rule)))
+  }
   const pick = (set: (v: string[]) => void) => (v: string[]) => clearDropdownsAndDrill(() => set(v))
 
   return (
@@ -139,7 +147,8 @@ export default function LeadsPage() {
         <input type="text" placeholder="Search name, practice, email, notes…" style={{ minWidth: 220 }} value={q} onChange={(e) => clearDropdownsAndDrill(() => setQ(e.target.value))} />
         <label className="small muted"><input type="checkbox" checked={layout.current.wrap} onChange={toggleWrap} /> Wrap text</label>
         <button className="btn ghost" onClick={resetLayout} style={{ padding: '6px 12px' }}>Reset layout</button>
-        <div className="small muted" style={{ marginLeft: 'auto' }}>{rows.length} shown{activeCount ? ` · ${activeCount} filter${activeCount > 1 ? 's' : ''} active` : ''}</div>
+        <button className="btn" onClick={exportRows} disabled={!rows.length} style={{ padding: '6px 12px' }} title="Export the leads currently shown (respects filters & drill-downs)">Export CSV ({rows.length})</button>
+        <div className="small muted" style={{ marginLeft: 'auto' }}>{rows.length} shown{activeCount ? ` · ${activeCount} filter${activeCount > 1 ? 's' : ''} active` : ''}{drill ? ' · drill' : ''}</div>
       </div>
 
       <div className="controls filters">

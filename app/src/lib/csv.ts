@@ -49,3 +49,13 @@ export function toCSV(rows: Record<string, unknown>[]): string {
   }
   return [head.join(',')].concat(rows.map((r) => head.map((h) => esc(r[h])).join(','))).join('\n')
 }
+
+// Build a CSV from rows and trigger a browser download.
+export function downloadCSV(filename: string, rows: Record<string, unknown>[]): void {
+  const blob = new Blob([toCSV(rows)], { type: 'text/csv;charset=utf-8' })
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(a.href)
+}

@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAppData } from '../data/AppData'
-import { parseCSV, rowsToObjects, toCSV } from '../lib/csv'
-import { chargePct, csvRowToLead, displayName, effectiveNotes, fmtMoney, isHigh, leadRevenue, ticketValue } from '../lib/leads'
+import { parseCSV, rowsToObjects, downloadCSV } from '../lib/csv'
+import { csvRowToLead, leadExportRow } from '../lib/leads'
 import { fetchImportBatches, importLeads, reapplyBatch, type ImportBatch } from '../lib/api'
-import { fmtInZone, PK_ZONE, SRC_ZONE } from '../lib/time'
+import { fmtInZone, PK_ZONE } from '../lib/time'
 
 function errMsg(e: unknown): string {
   if (e instanceof Error) return e.message
@@ -68,23 +68,8 @@ export default function Upload() {
   }
 
   const exportEnriched = () => {
-    const rows = leads.map((l) => ({
-      'Record Id': l.record_id, Name: displayName(l), Email: l.email, Phone: l.phone, Practice: l.practice,
-      Specialty: l.specialty, Physicians: l.physicians, Source: l.source, Status: l.status, Stage: l.stage,
-      'Created PK': fmtInZone(l.created_utc, PK_ZONE), 'Created US': fmtInZone(l.created_utc, SRC_ZONE),
-      'Monthly Collections (CRM)': l.monthly_collections, 'Ticket $/mo': ticketValue(l),
-      'Charge %': chargePct(l), 'Revenue $/mo': leadRevenue(l),
-      'High Ticket': isHigh(l, rule) ? 'Yes' : 'No', Notes: effectiveNotes(l),
-      'Source/Medium': l.manual_source_medium, 'First Landing Page': l.manual_first_landing ?? l.first_page,
-      '2nd Page': l.manual_second_page, 'Lead Submit Page': l.manual_submit_page,
-      'Possible Search Query': l.manual_search_query, 'Recording': l.manual_recording,
-    }))
-    if (!rows.length) return
-    const blob = new Blob([toCSV(rows)], { type: 'text/csv' })
-    const a = document.createElement('a')
-    a.href = URL.createObjectURL(blob)
-    a.download = 'transcure_enriched_leads.csv'
-    a.click()
+    if (!leads.length) return
+    downloadCSV('transcure_enriched_leads.csv', leads.map((l) => leadExportRow(l, rule)))
   }
 
   return (

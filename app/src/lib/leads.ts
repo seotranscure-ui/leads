@@ -1,4 +1,4 @@
-import { parseSourceTime } from './time'
+import { parseSourceTime, fmtInZone, monthKeyOf, PK_ZONE, SRC_ZONE } from './time'
 import { stageFor } from './funnel'
 
 // A lead as stored in / read from the DB.
@@ -172,4 +172,21 @@ export function chargePct(l: Lead): number {
 export function leadRevenue(l: Lead): number {
   const t = ticketValue(l)
   return t == null ? 0 : (t * chargePct(l)) / 100
+}
+
+// One flat record for CSV export — used by both the Upload page (all leads) and
+// the Leads page (current filtered/drilled subset), so the columns stay identical.
+export function leadExportRow(l: Lead, rule: HighTicketRule): Record<string, unknown> {
+  return {
+    'Record Id': l.record_id, Name: displayName(l), Email: l.email, Phone: l.phone, Practice: l.practice,
+    Specialty: l.specialty, Physicians: l.physicians, Source: l.source, Status: l.status, Stage: l.stage,
+    'Created PK': fmtInZone(l.created_utc, PK_ZONE), 'Created US': fmtInZone(l.created_utc, SRC_ZONE),
+    'Monthly Collections (CRM)': l.monthly_collections, 'Ticket $/mo': ticketValue(l),
+    'Charge %': chargePct(l), 'Revenue $/mo': Math.round(leadRevenue(l)),
+    'Revenue Month': l.manual_revenue_month || monthKeyOf(l.created_utc).key,
+    'High Ticket': isHigh(l, rule) ? 'Yes' : 'No', Notes: effectiveNotes(l),
+    'Source/Medium': l.manual_source_medium, 'First Landing Page': l.manual_first_landing ?? l.first_page,
+    '2nd Page': l.manual_second_page, 'Lead Submit Page': l.manual_submit_page,
+    'Possible Search Query': l.manual_search_query, Recording: l.manual_recording,
+  }
 }

@@ -1,28 +1,55 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAppData, type Drill } from '../data/AppData'
 import { isDemo, isWon } from '../lib/funnel'
 import { isHigh, leadRevenue, ruleLabel, ticketValue, fmtMoney, type Lead } from '../lib/leads'
 import { monthlyStats, pct, specKey, monthKey, revenueMonthKey } from '../lib/stats'
+import { fmtInZone, PK_ZONE } from '../lib/time'
 
 export default function Dashboard() {
   const { leads, rule, setDrill, loading, error } = useAppData()
   const nav = useNavigate()
 
-  const go = (label: string, test: Drill['test']) => { setDrill({ label, test }); nav('/leads') }
+  // Period filter — scopes the whole dashboard by lead created date (PK).
+  const [from, setFrom] = useState('')
+  const [to, setTo] = useState('')
+  const inRange = (l: Lead): boolean => {
+    if (!from && !to) return true
+    const d = fmtInZone(l.created_utc, PK_ZONE, false)
+    if (!d) return false
+    if (from && d < from) return false
+    if (to && d > to) return false
+    return true
+  }
+  const setPeriod = (kind: 'all' | 'thisMonth' | 'last3' | 'thisYear') => {
+    const p: Record<string, string> = {}
+    for (const x of new Intl.DateTimeFormat('en-CA', { timeZone: PK_ZONE, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date())) if (x.type !== 'literal') p[x.type] = x.value
+    const y = +p.year, m = +p.month
+    const iso = (yy: number, mm: number, dd: number) => `${yy}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`
+    const today = `${p.year}-${p.month}-${p.day}`
+    if (kind === 'all') { setFrom(''); setTo('') }
+    else if (kind === 'thisMonth') { setFrom(iso(y, m, 1)); setTo(today) }
+    else if (kind === 'last3') { let mm = m - 2, yy = y; while (mm < 1) { mm += 12; yy-- } setFrom(iso(yy, mm, 1)); setTo(today) }
+    else if (kind === 'thisYear') { setFrom(iso(y, 1, 1)); setTo(today) }
+  }
+
+  // Drill-downs always respect the active period.
+  const go = (label: string, test: Drill['test']) => { setDrill({ label, test: (l) => inRange(l) && test(l) }); nav('/leads') }
+
+  const scoped = useMemo(() => leads.filter(inRange), [leads, from, to])
 
   const stats = useMemo(() => {
-    const demos = leads.filter((l) => isDemo(l.stage)).length
-    const wons = leads.filter((l) => isWon(l.stage)).length
-    const ht = leads.filter((l) => isHigh(l, rule)).length
-    const seo = leads.filter((l) => l.source.toLowerCase() === 'seo').length
-    const wonMonthly = leads.filter((l) => isWon(l.stage)).reduce((s, l) => s + (ticketValue(l) || 0), 0)
-    const revenueWon = leads.filter((l) => isWon(l.stage)).reduce((s, l) => s + leadRevenue(l), 0)
-    const lostRevenue = leads.filter((l) => !isWon(l.stage) && ticketValue(l) != null).reduce((s, l) => s + leadRevenue(l), 0)
-    const months = monthlyStats(leads, rule)
+    const demos = scoped.filter((l) => isDemo(l.stage)).length
+    const wons = scoped.filter((l) => isWon(l.stage)).length
+    const ht = scoped.filter((l) => isHigh(l, rule)).length
+    const seo = scoped.filter((l) => l.source.toLowerCase() === 'seo').length
+    const wonMonthly = scoped.filter((l) => isWon(l.stage)).reduce((s, l) => s + (ticketValue(l) || 0), 0)
+    const revenueWon = scoped.filter((l) => isWon(l.stage)).reduce((s, l) => s + leadRevenue(l), 0)
+    const lostRevenue = scoped.filter((l) => !isWon(l.stage) && ticketValue(l) != null).reduce((s, l) => s + leadRevenue(l), 0)
+    const months = monthlyStats(scoped, rule)
     const bySrc: Record<string, number> = {}
     const bySrcSales: Record<string, { sales: number; coll: number; rev: number }> = {}
-    leads.forEach((l) => {
+    scoped.forEach((l) => {
       bySrc[l.source] = (bySrc[l.source] || 0) + 1
       if (isWon(l.stage)) {
         if (!bySrcSales[l.source]) bySrcSales[l.source] = { sales: 0, coll: 0, rev: 0 }
@@ -32,7 +59,7 @@ export default function Dashboard() {
       }
     })
     const sp: Record<string, { leads: number; demos: number; sales: number; ht: number; coll: number; rev: number }> = {}
-    leads.forEach((l) => {
+    scoped.forEach((l) => {
       const k = specKey(l)
       if (!sp[k]) sp[k] = { leads: 0, demos: 0, sales: 0, ht: 0, coll: 0, rev: 0 }
       sp[k].leads++
@@ -44,7 +71,7 @@ export default function Dashboard() {
       srcRows: Object.entries(bySrc).sort((a, b) => b[1] - a[1]),
       srcSalesRows: Object.entries(bySrcSales).sort((a, b) => b[1].sales - a[1].sales),
       spRows: Object.entries(sp).sort((a, b) => b[1].leads - a[1].leads) }
-  }, [leads, rule])
+  }, [scoped, rule])
 
   if (loading) return <div className="center-msg">Loading leads…</div>
   if (error) return <div className="note err">{error}</div>
@@ -56,7 +83,7 @@ export default function Dashboard() {
       </div>
     )
 
-  const all = leads
+  const all = scoped
   const { demos, wons, ht, seo, wonMonthly, revenueWon, lostRevenue, months, srcRows, srcSalesRows, spRows } = stats
   const totalWon = wons
   const isSeo = (l: Lead) => l.source.toLowerCase() === 'seo'
@@ -74,9 +101,23 @@ export default function Dashboard() {
 
   return (
     <>
+      <div className="controls filters">
+        <span className="small muted" style={{ fontWeight: 700 }}>Period:</span>
+        <button className="btn ghost" onClick={() => setPeriod('all')}>All time</button>
+        <button className="btn ghost" onClick={() => setPeriod('thisMonth')}>This month</button>
+        <button className="btn ghost" onClick={() => setPeriod('last3')}>Last 3 months</button>
+        <button className="btn ghost" onClick={() => setPeriod('thisYear')}>This year</button>
+        <span className="datef small muted">From <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} /></span>
+        <span className="datef small muted">To <input type="date" value={to} onChange={(e) => setTo(e.target.value)} /></span>
+        {(from || to) && <button className="btn ghost" onClick={() => setPeriod('all')}>Clear</button>}
+        <span className="small muted" style={{ marginLeft: 'auto' }}>
+          {from || to ? `${from || '…'} → ${to || '…'} · ` : ''}{scoped.length} of {leads.length} leads
+        </span>
+      </div>
       <div className="controls">
         <span className="small muted">High-ticket: <b>{ruleLabel(rule)}</b> (or manual ⭐) — change in <a onClick={() => nav('/admin')} style={{ cursor: 'pointer' }}>Admin</a></span>
       </div>
+      {!scoped.length && <div className="note">No leads created in this period. Adjust the dates or pick <b>All time</b>.</div>}
 
       <div className="grid kpis">
         {kpis.map((k, i) => (

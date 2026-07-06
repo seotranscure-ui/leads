@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useAppData, type Drill } from '../data/AppData'
 import { isDemo, isWon } from '../lib/funnel'
 import { isHigh, leadRevenue, ruleLabel, ticketValue, fmtMoney, type HighTicketRule, type Lead } from '../lib/leads'
-import { monthlyStats, pct, specKey, monthKey } from '../lib/stats'
+import { monthlyStats, pct, specKey, monthKey, revenueMonthKey } from '../lib/stats'
 
 export default function Dashboard() {
   const { leads, rule, updateRule, setDrill, loading, error } = useAppData()
@@ -117,7 +117,7 @@ export default function Dashboard() {
                   <td>{m.label}</td>
                   <td className="right link" onClick={() => go('Leads · ' + m.label, (l) => monthKey(l) === m.key)}>{m.leads}</td>
                   <td className="right link" onClick={() => go('Demos · ' + m.label, (l) => monthKey(l) === m.key && isDemo(l.stage))}>{m.demos}</td>
-                  <td className="right link" onClick={() => go('Sales · ' + m.label, (l) => monthKey(l) === m.key && isWon(l.stage))}>{m.sales}</td>
+                  <td className="right link" onClick={() => go('Sales · ' + m.label, (l) => isWon(l.stage) && revenueMonthKey(l) === m.key)}>{m.sales}</td>
                   <td className="right" title="Total monthly collections from closed (won) leads">{fmtMoney(m.coll) || '—'}</td>
                   <td className="right" title="Our revenue = charge % of won collections">{fmtMoney(m.rev) || '—'}</td>
                   <td className="right link" onClick={() => go('High-ticket · ' + m.label, (l) => monthKey(l) === m.key && isHigh(l, rule))}>{m.ht}</td>

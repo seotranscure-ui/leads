@@ -42,3 +42,5 @@ export function monthlyStats(leads: Lead[], rule: HighTicketRule, filter?: (l: L
 export const pct = (a: number, b: number) => (b ? ((a / b) * 100).toFixed(1) + '%' : '—')
 export const specKey = (l: Lead) => (l.specialty || '').trim() || '(unspecified)'
 export const monthKey = (l: Lead) => monthKeyOf(l.created_utc).key
+// The month a won lead's sale/collections/revenue is recognized in (override, else created month).
+export const revenueMonthKey = (l: Lead) => l.manual_revenue_month || monthKeyOf(l.created_utc).key

@@ -15,7 +15,7 @@ interface SeqRow {
 }
 
 export default function FollowUps() {
-  const { leads, sequences, steps, startFollowUp, completeStep, rescheduleStep, resolveSequence, changeSequenceEmail } = useAppData()
+  const { leads, sequences, steps, followUpError, startFollowUp, completeStep, rescheduleStep, resolveSequence, changeSequenceEmail } = useAppData()
   const nav = useNavigate()
 
   const [filter, setFilter] = useState<'active' | 'all'>('active')
@@ -129,6 +129,14 @@ export default function FollowUps() {
           <button className={'btn' + (filter === 'all' ? '' : ' ghost')} onClick={() => setFilter('all')}>All</button>
         </div>
       </div>
+
+      {followUpError && (
+        <div className="note err" style={{ marginBottom: 16 }}>
+          <b>Follow-up tables unavailable.</b> Your leads are unaffected, but sequences cannot load or be created until the
+          migration is applied. Run <code>app/supabase/migrations/001_follow_ups.sql</code> in the Supabase SQL Editor.
+          <div className="small" style={{ marginTop: 6, opacity: .85 }}>Details: {followUpError}</div>
+        </div>
+      )}
 
       {/* Suggestion strip: Negotiation leads without a sequence */}
       {negWithout.length > 0 && filter === 'active' && (

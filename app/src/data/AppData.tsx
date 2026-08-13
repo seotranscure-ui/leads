@@ -29,6 +29,7 @@ interface AppCtx {
   // follow-up sequences
   sequences: FollowUpSequence[]
   steps: FollowUpStep[]
+  followUpError: string | null
   startFollowUp: (leadId: string, email: string, steps: { scheduled_date: string; channels: string[] }[]) => Promise<void>
   completeStep: (stepId: string, notes?: string) => Promise<void>
   rescheduleStep: (stepId: string, date: string) => Promise<void>
@@ -48,6 +49,22 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   const [drill, setDrill] = useState<Drill | null>(null)
   const [sequences, setSequences] = useState<FollowUpSequence[]>([])
   const [steps, setSteps] = useState<FollowUpStep[]>([])
+  const [followUpError, setFollowUpError] = useState<string | null>(null)
+
+  // Follow-up tables load independently of the core data. If they are missing or
+  // erroring, we surface it as a warning but NEVER let it block leads from loading.
+  const loadSequences = async () => {
+    try {
+      const [seqs, allSteps] = await Promise.all([fetchSequences(), fetchAllSteps()])
+      setSequences(seqs)
+      setSteps(allSteps)
+      setFollowUpError(null)
+    } catch (e) {
+      setSequences([])
+      setSteps([])
+      setFollowUpError(e instanceof Error ? e.message : String(e))
+    }
+  }
 
   const refresh = async () => {
     setLoading(true)
@@ -62,25 +79,10 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     } finally {
       setLoading(false)
     }
-    // Load follow-up tables separately — if they don't exist yet they must not block leads.
-    try {
-      const [seqs, allSteps] = await Promise.all([fetchSequences(), fetchAllSteps()])
-      setSequences(seqs)
-      setSteps(allSteps)
-    } catch {
-      // Tables not yet migrated; sequences stay empty, main data is unaffected.
-    }
+    await loadSequences()
   }
 
-  const refreshSequences = async () => {
-    try {
-      const [seqs, allSteps] = await Promise.all([fetchSequences(), fetchAllSteps()])
-      setSequences(seqs)
-      setSteps(allSteps)
-    } catch {
-      // Non-fatal if tables aren't migrated yet.
-    }
-  }
+  const refreshSequences = loadSequences
 
   useEffect(() => { refresh() }, [])
 
@@ -172,7 +174,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       leads, rule, logoUrl, loading, error, refresh,
       updateManual, addLead, removeLead, updateRule, updateLogo,
       drill, setDrill,
-      sequences, steps,
+      sequences, steps, followUpError,
       startFollowUp, completeStep, rescheduleStep, resolveSequence,
       changeSequenceEmail, refreshSequences,
     }}>

@@ -5,9 +5,10 @@ import { isDemo, isWon } from '../lib/funnel'
 import { isHigh, leadRevenue, ruleLabel, ticketValue, fmtMoney, type Lead } from '../lib/leads'
 import { monthlyStats, pct, specKey, monthKey, revenueMonthKey } from '../lib/stats'
 import { fmtInZone, PK_ZONE } from '../lib/time'
+import { isOverdue, isDueToday } from '../lib/followups'
 
 export default function Dashboard() {
-  const { leads, rule, setDrill, loading, error } = useAppData()
+  const { leads, rule, setDrill, loading, error, sequences, steps } = useAppData()
   const nav = useNavigate()
 
   // Period filter. Lead-intake metrics scope by created date (day granularity);
@@ -88,6 +89,14 @@ export default function Dashboard() {
   const isSeo = (l: Lead) => l.source.toLowerCase() === 'seo'
   const hasData = totalLeads > 0 || wons > 0
 
+  const followUpsDue = useMemo(() =>
+    steps.filter((s) => {
+      const seq = sequences.find((sq) => sq.id === s.sequence_id)
+      return seq?.status === 'active' && (isOverdue(s) || isDueToday(s))
+    }).length,
+    [steps, sequences],
+  )
+
   const kpis: [string, string | number, string, () => void][] = [
     ['Total leads', totalLeads, 'came in this period', () => go('Leads in period', (l) => createdIn(l))],
     ['SEO leads', seo, pct(seo, totalLeads) + ' of leads', () => go('SEO leads in period', (l) => createdIn(l) && isSeo(l))],
@@ -97,6 +106,7 @@ export default function Dashboard() {
     ['Revenue /mo (won)', fmtMoney(revenueWon), 'our charge % of won collections', () => go('Won leads (this period)', (l) => isWon(l.stage) && revIn(l))],
     ['Lost revenue /mo', fmtMoney(lostRevenue), 'charge % of non-won collections', () => go('Non-won leads with a collection', (l) => createdIn(l) && !isWon(l.stage) && ticketValue(l) != null)],
     ['High-ticket', ht, pct(ht, totalLeads) + ' of leads', () => go('High-ticket leads', (l) => createdIn(l) && isHigh(l, rule))],
+    ['Follow-ups due', followUpsDue, 'overdue or due today', () => nav('/follow-ups')],
   ]
 
   return (

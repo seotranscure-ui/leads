@@ -16,11 +16,18 @@ export const CHANNEL_ICON: Record<string, string> = {
 export interface FollowUpSequence {
   id: string
   lead_record_id: string
-  manager_email: string
+  // null = inherit the account-wide default set in Admin; a value = per-lead override.
+  manager_email: string | null
   started_at: string
   started_by: string | null
   status: 'active' | 'won' | 'lost'
   created_at: string
+}
+
+// The address reminders for this sequence actually go to.
+export function effectiveEmail(seq: FollowUpSequence, defaultEmail: string): string {
+  const own = (seq.manager_email ?? '').trim()
+  return own !== '' ? own : defaultEmail.trim()
 }
 
 export interface FollowUpStep {
@@ -89,4 +96,17 @@ export function buildReminderMailto(
     `Thank you.`,
   ].join('\r\n')
   return `mailto:${encodeURIComponent(managerEmail)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
+}
+
+// A sample reminder, so the manager can verify the address and format before a
+// real follow-up comes due. Uses the same builder as a live reminder.
+export function buildTestReminderMailto(managerEmail: string): string {
+  return buildReminderMailto(
+    managerEmail,
+    '[TEST] Sample Lead',
+    'Sample Practice',
+    1,
+    todayIso(),
+    [...STEP_CHANNELS[0]],
+  )
 }

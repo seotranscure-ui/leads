@@ -1,12 +1,34 @@
 import { useEffect, useState, type ChangeEvent } from 'react'
 import { useAppData } from '../data/AppData'
 import { ruleLabel, type HighTicketRule } from '../lib/leads'
+import { buildTestReminderMailto } from '../lib/followups'
 import Logo from './Logo'
 
 export default function Admin() {
-  const { logoUrl, updateLogo, rule, updateRule } = useAppData()
+  const { logoUrl, updateLogo, rule, updateRule, managerEmail, updateManagerEmail, sequences } = useAppData()
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
+
+  // Lead-manager email — the default recipient for every follow-up reminder.
+  const [email, setEmail] = useState(managerEmail)
+  const [emailMsg, setEmailMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
+  useEffect(() => { setEmail(managerEmail) }, [managerEmail])
+
+  const overrideCount = sequences.filter((s) => (s.manager_email ?? '').trim() !== '').length
+
+  const saveEmail = async () => {
+    const v = email.trim()
+    if (v !== '' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) {
+      setEmailMsg({ kind: 'err', text: 'Enter a valid email address.' }); return
+    }
+    setEmailMsg(null)
+    try {
+      await updateManagerEmail(v)
+      setEmailMsg({ kind: 'ok', text: v ? 'Lead-manager email saved.' : 'Lead-manager email cleared.' })
+    } catch (e) {
+      setEmailMsg({ kind: 'err', text: e instanceof Error ? e.message : String(e) })
+    }
+  }
 
   // High-ticket rule editor
   const [op, setOp] = useState<HighTicketRule['op']>(rule.op)
@@ -83,6 +105,42 @@ export default function Admin() {
       </div>
       <div className="small muted">Current: <b>{ruleLabel(rule)}</b></div>
       {ruleMsg && <div className={'note ' + (ruleMsg.kind === 'ok' ? 'ok' : 'err')} style={{ marginTop: 12 }}>{ruleMsg.text}</div>}
+    </div>
+
+    <h2 className="section">Follow-ups — Lead manager email</h2>
+    <div className="card" style={{ maxWidth: 660 }}>
+      <p className="small muted">
+        Follow-up reminders are addressed to this person by default. Every lead that reaches <b>Negotiation</b> stage is
+        enrolled in a 5-week sequence automatically. You can override the address for an individual lead on the
+        Follow-Ups page — leads without an override always follow whatever is set here.
+      </p>
+      <div className="controls" style={{ marginBottom: 8 }}>
+        <input
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') saveEmail() }}
+          placeholder="manager@example.com"
+          style={{ width: 280 }}
+        />
+        <button className="btn" onClick={saveEmail}>Save email</button>
+        {managerEmail.trim() && (
+          <a className="btn ghost" href={buildTestReminderMailto(managerEmail)} style={{ textDecoration: 'none' }}>
+            Send test reminder
+          </a>
+        )}
+      </div>
+      <div className="small muted">
+        Current: <b>{managerEmail.trim() || 'not set'}</b>
+        {overrideCount > 0 && <> · {overrideCount} lead{overrideCount > 1 ? 's' : ''} with a custom address (unaffected by this setting)</>}
+      </div>
+      <div className="note" style={{ marginTop: 12 }}>
+        <b>How reminders are sent.</b> "Send test reminder" and the per-step reminder buttons open a pre-composed
+        message in your own email client, which you then send. The tool does not send mail on a schedule by itself —
+        that would need a mail service connected to the database. The Follow-Ups tab and the badge in the header are
+        what tell you when a step is due.
+      </div>
+      {emailMsg && <div className={'note ' + (emailMsg.kind === 'ok' ? 'ok' : 'err')} style={{ marginTop: 12 }}>{emailMsg.text}</div>}
     </div>
 
     <h2 className="section">Branding — Logo</h2>

@@ -169,7 +169,7 @@ export async function fetchAllSteps(): Promise<FollowUpStep[]> {
 
 export async function createSequence(
   leadRecordId: string,
-  managerEmail: string,
+  managerEmail: string | null,
   steps: { scheduled_date: string; channels: string[] }[],
 ): Promise<FollowUpSequence> {
   const { data: u } = await supabase.auth.getUser()
@@ -190,6 +190,57 @@ export async function createSequence(
   return seq as FollowUpSequence
 }
 
+// Auto-provision a sequence for every lead that needs one. Sequences inherit the
+// account-wide manager email (manager_email = null), and steps default to weekly.
+// Returns the number of sequences created.
+export async function provisionSequences(
+  leadIds: string[],
+  stepsFor: (leadId: string) => { scheduled_date: string; channels: string[] }[],
+): Promise<number> {
+  if (!leadIds.length) return 0
+  const { data: u } = await supabase.auth.getUser()
+  const uid = u?.user?.id ?? null
+
+  // ignoreDuplicates: if another session enrolled the same lead a moment ago, the
+  // unique constraint on lead_record_id makes this a no-op instead of an error.
+  const { data: created, error: se } = await supabase
+    .from('follow_up_sequences')
+    .upsert(
+      leadIds.map((id) => ({ lead_record_id: id, manager_email: null, started_by: uid })),
+      { onConflict: 'lead_record_id', ignoreDuplicates: true },
+    )
+    .select()
+  if (se) throw se
+
+  const rows = (created ?? []) as FollowUpSequence[]
+  const stepRows = rows.flatMap((seq) =>
+    stepsFor(seq.lead_record_id).map((s, i) => ({
+      sequence_id: seq.id,
+      step_number: i + 1,
+      scheduled_date: s.scheduled_date,
+      channels: s.channels,
+    })),
+  )
+  if (stepRows.length) {
+    const { error: ste } = await supabase.from('follow_up_steps').insert(stepRows)
+    if (ste) throw ste
+  }
+  return rows.length
+}
+
+// Account-wide lead-manager email used for reminders unless a sequence overrides it.
+export async function getManagerEmail(): Promise<string> {
+  const { data } = await supabase.from('app_settings').select('value').eq('key', 'follow_up_manager_email').maybeSingle()
+  return typeof data?.value === 'string' ? (data.value as string) : ''
+}
+
+export async function setManagerEmail(email: string): Promise<void> {
+  const { error } = await supabase
+    .from('app_settings')
+    .upsert({ key: 'follow_up_manager_email', value: email as unknown as object, updated_at: new Date().toISOString() })
+  if (error) throw error
+}
+
 export async function markStepDone(stepId: string, notes?: string): Promise<void> {
   const { error } = await supabase
     .from('follow_up_steps')
@@ -208,7 +259,8 @@ export async function markSequenceStatus(sequenceId: string, status: 'active' | 
   if (error) throw error
 }
 
-export async function updateSequenceEmail(sequenceId: string, email: string): Promise<void> {
+// Pass null to clear the override and fall back to the Admin default.
+export async function updateSequenceEmail(sequenceId: string, email: string | null): Promise<void> {
   const { error } = await supabase.from('follow_up_sequences').update({ manager_email: email }).eq('id', sequenceId)
   if (error) throw error
 }

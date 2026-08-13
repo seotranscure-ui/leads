@@ -52,26 +52,34 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   const refresh = async () => {
     setLoading(true)
     try {
-      const [l, r, logo, seqs, allSteps] = await Promise.all([
-        fetchLeads(), getRule(), getLogo(), fetchSequences(), fetchAllSteps(),
-      ])
+      const [l, r, logo] = await Promise.all([fetchLeads(), getRule(), getLogo()])
       setLeads(l)
       setRule(r)
       setLogoUrl(logo)
-      setSequences(seqs)
-      setSteps(allSteps)
       setError(null)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
       setLoading(false)
     }
+    // Load follow-up tables separately — if they don't exist yet they must not block leads.
+    try {
+      const [seqs, allSteps] = await Promise.all([fetchSequences(), fetchAllSteps()])
+      setSequences(seqs)
+      setSteps(allSteps)
+    } catch {
+      // Tables not yet migrated; sequences stay empty, main data is unaffected.
+    }
   }
 
   const refreshSequences = async () => {
-    const [seqs, allSteps] = await Promise.all([fetchSequences(), fetchAllSteps()])
-    setSequences(seqs)
-    setSteps(allSteps)
+    try {
+      const [seqs, allSteps] = await Promise.all([fetchSequences(), fetchAllSteps()])
+      setSequences(seqs)
+      setSteps(allSteps)
+    } catch {
+      // Non-fatal if tables aren't migrated yet.
+    }
   }
 
   useEffect(() => { refresh() }, [])

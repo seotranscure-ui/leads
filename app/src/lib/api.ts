@@ -1,5 +1,6 @@
 import { supabase } from './supabase'
 import { DEFAULT_RULE, type CrmLead, type HighTicketRule, type Lead, type ManualPatch } from './leads'
+import type { FollowUpSequence, FollowUpStep } from './followups'
 
 // Fetch all leads (paged past PostgREST's 1000-row default cap).
 export async function fetchLeads(): Promise<Lead[]> {
@@ -143,5 +144,76 @@ export async function getLogo(): Promise<string | null> {
 
 export async function setLogo(dataUrl: string | null): Promise<void> {
   const { error } = await supabase.from('app_settings').upsert({ key: 'logo_data_url', value: dataUrl as unknown as object, updated_at: new Date().toISOString() })
+  if (error) throw error
+}
+
+// ── Follow-up sequences ──────────────────────────────────────────────────────
+
+export async function fetchSequences(): Promise<FollowUpSequence[]> {
+  const { data, error } = await supabase
+    .from('follow_up_sequences')
+    .select('*')
+    .order('created_at', { ascending: false })
+  if (error) throw error
+  return (data ?? []) as FollowUpSequence[]
+}
+
+export async function fetchAllSteps(): Promise<FollowUpStep[]> {
+  const { data, error } = await supabase
+    .from('follow_up_steps')
+    .select('*')
+    .order('step_number')
+  if (error) throw error
+  return (data ?? []) as FollowUpStep[]
+}
+
+export async function createSequence(
+  leadRecordId: string,
+  managerEmail: string,
+  steps: { scheduled_date: string; channels: string[] }[],
+): Promise<FollowUpSequence> {
+  const { data: u } = await supabase.auth.getUser()
+  const { data: seq, error: se } = await supabase
+    .from('follow_up_sequences')
+    .insert({ lead_record_id: leadRecordId, manager_email: managerEmail, started_by: u?.user?.id ?? null })
+    .select()
+    .single()
+  if (se) throw se
+  const stepRows = steps.map((s, i) => ({
+    sequence_id: (seq as FollowUpSequence).id,
+    step_number: i + 1,
+    scheduled_date: s.scheduled_date,
+    channels: s.channels,
+  }))
+  const { error: ste } = await supabase.from('follow_up_steps').insert(stepRows)
+  if (ste) throw ste
+  return seq as FollowUpSequence
+}
+
+export async function markStepDone(stepId: string, notes?: string): Promise<void> {
+  const { error } = await supabase
+    .from('follow_up_steps')
+    .update({ status: 'done', completed_at: new Date().toISOString(), notes: notes ?? null })
+    .eq('id', stepId)
+  if (error) throw error
+}
+
+export async function updateStepDate(stepId: string, date: string): Promise<void> {
+  const { error } = await supabase.from('follow_up_steps').update({ scheduled_date: date }).eq('id', stepId)
+  if (error) throw error
+}
+
+export async function markSequenceStatus(sequenceId: string, status: 'active' | 'won' | 'lost'): Promise<void> {
+  const { error } = await supabase.from('follow_up_sequences').update({ status }).eq('id', sequenceId)
+  if (error) throw error
+}
+
+export async function updateSequenceEmail(sequenceId: string, email: string): Promise<void> {
+  const { error } = await supabase.from('follow_up_sequences').update({ manager_email: email }).eq('id', sequenceId)
+  if (error) throw error
+}
+
+export async function updateLeadStageAndStatus(recordId: string, status: string, stage: string): Promise<void> {
+  const { error } = await supabase.from('leads').update({ status, stage }).eq('record_id', recordId)
   if (error) throw error
 }

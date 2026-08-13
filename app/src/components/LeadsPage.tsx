@@ -1,4 +1,5 @@
 import { Fragment, useMemo, useReducer, useRef, useState, type MouseEvent as RMouseEvent } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useAppData } from '../data/AppData'
 import { FUNNEL_ORDER } from '../lib/funnel'
 import { chargePct, displayName, effectiveNotes, fmtMoney, isHigh, leadExportRow, leadRevenue, num, ticketValue, type Lead } from '../lib/leads'
@@ -6,6 +7,8 @@ import { downloadCSV } from '../lib/csv'
 import { fmtInZone, PK_ZONE, SRC_ZONE } from '../lib/time'
 import MultiSelect from './MultiSelect'
 import AddLead from './AddLead'
+import StartSequenceModal from './StartSequenceModal'
+import { nextPending, isOverdue, isDueToday } from '../lib/followups'
 import { monthKey } from '../lib/stats'
 
 const COLS = [
@@ -29,7 +32,9 @@ function loadLayout(): Layout {
 }
 
 export default function LeadsPage() {
-  const { leads, rule, updateManual, removeLead, drill, setDrill } = useAppData()
+  const { leads, rule, updateManual, removeLead, drill, setDrill, sequences, steps, startFollowUp } = useAppData()
+  const nav = useNavigate()
+  const [startingFor, setStartingFor] = useState<Lead | null>(null)
   const [q, setQ] = useState('')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
@@ -255,8 +260,35 @@ export default function LeadsPage() {
                           {ticketValue(l) != null && <> · Revenue @ {chargePct(l)}%: <b>{fmtMoney(leadRevenue(l))}</b></>}
                           {l.manual_recording && <> · <a href={l.manual_recording} target="_blank" rel="noreferrer">open recording ↗</a></>}
                         </div>
-                        <div className="detail-foot">
+                        <div className="detail-foot" style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                           <button className="btn warn" style={{ padding: '5px 12px' }} onClick={() => del(l)}>Delete lead</button>
+                          {(() => {
+                            const activeSeq = sequences.find((s) => s.status === 'active' && s.lead_record_id === l.record_id)
+                            if (activeSeq) {
+                              const seqSteps = steps.filter((s) => s.sequence_id === activeSeq.id).sort((a, b) => a.step_number - b.step_number)
+                              const np = nextPending(seqSteps)
+                              const overdue = np ? isOverdue(np) : false
+                              const dueToday = np ? isDueToday(np) : false
+                              return (
+                                <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+                                  <span className="small" style={{ color: overdue ? 'var(--warn)' : dueToday ? '#856404' : 'var(--muted)' }}>
+                                    {np ? (overdue ? '⚠️ Overdue: ' : dueToday ? '⏰ Due today: ' : '📋 Next: ') + `Week ${np.step_number} · ${np.scheduled_date}` : '✅ All steps done'}
+                                  </span>
+                                  <button className="btn ghost" style={{ padding: '4px 10px', fontSize: 12 }} onClick={() => nav('/follow-ups')}>
+                                    View Follow-Ups →
+                                  </button>
+                                </span>
+                              )
+                            }
+                            if (l.stage === 'Negotiation') {
+                              return (
+                                <button className="btn ghost" style={{ marginLeft: 'auto', padding: '5px 12px', fontSize: 12 }} onClick={() => setStartingFor(l)}>
+                                  + Start Follow-Up Sequence
+                                </button>
+                              )
+                            }
+                            return null
+                          })()}
                         </div>
                       </div>
                     </td>
@@ -271,6 +303,17 @@ export default function LeadsPage() {
       <p className="small muted" style={{ marginTop: 8 }}>
         Times shown as <b>PK</b> with <span className="us">US Chicago</span> beneath. Ticket / High / Notes are saved to the shared database and preserved across imports.
       </p>
+      {startingFor && (
+        <StartSequenceModal
+          lead={startingFor}
+          onClose={() => setStartingFor(null)}
+          onStart={async (email, stepDefs) => {
+            await startFollowUp(startingFor.record_id, email, stepDefs)
+            setStartingFor(null)
+            nav('/follow-ups')
+          }}
+        />
+      )}
     </>
   )
 }

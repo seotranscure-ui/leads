@@ -8,6 +8,7 @@ import LeadsPage from './components/LeadsPage'
 import Funnel from './components/Funnel'
 import Upload from './components/Upload'
 import Admin from './components/Admin'
+import FollowUps from './components/FollowUps'
 
 export default function App() {
   const { session, loading } = useAuth()
@@ -22,6 +23,7 @@ export default function App() {
           <Route index element={<Dashboard />} />
           <Route path="leads" element={<LeadsPage />} />
           <Route path="funnel" element={<Funnel />} />
+          <Route path="follow-ups" element={<FollowUps />} />
           <Route path="upload" element={<Upload />} />
           <Route path="admin" element={<Admin />} />
         </Route>

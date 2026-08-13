@@ -129,10 +129,12 @@ create policy "public read logo" on public.app_settings
 -- ---------------------------------------------------------------------------
 -- follow_up_sequences: one per lead that has an active follow-up campaign.
 -- ---------------------------------------------------------------------------
+-- manager_email is nullable: NULL means "use the account-wide default" stored in
+-- app_settings under 'follow_up_manager_email'; a value is a per-lead override.
 create table if not exists public.follow_up_sequences (
   id               uuid primary key default gen_random_uuid(),
-  lead_record_id   text not null references public.leads(record_id) on delete cascade,
-  manager_email    text not null,
+  lead_record_id   text not null unique references public.leads(record_id) on delete cascade,
+  manager_email    text,
   started_at       timestamptz not null default now(),
   started_by       uuid references auth.users(id),
   status           text not null default 'active'
@@ -141,6 +143,10 @@ create table if not exists public.follow_up_sequences (
 );
 
 create index if not exists fup_seq_lead_idx on public.follow_up_sequences (lead_record_id);
+
+insert into public.app_settings (key, value)
+values ('follow_up_manager_email', '""'::jsonb)
+on conflict (key) do nothing;
 
 -- ---------------------------------------------------------------------------
 -- follow_up_steps: 5 steps per sequence (one per week).

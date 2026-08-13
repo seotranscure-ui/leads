@@ -7,7 +7,6 @@ import { downloadCSV } from '../lib/csv'
 import { fmtInZone, PK_ZONE, SRC_ZONE } from '../lib/time'
 import MultiSelect from './MultiSelect'
 import AddLead from './AddLead'
-import StartSequenceModal from './StartSequenceModal'
 import { nextPending, isOverdue, isDueToday } from '../lib/followups'
 import { monthKey } from '../lib/stats'
 
@@ -32,9 +31,8 @@ function loadLayout(): Layout {
 }
 
 export default function LeadsPage() {
-  const { leads, rule, updateManual, removeLead, drill, setDrill, sequences, steps, startFollowUp } = useAppData()
+  const { leads, rule, updateManual, removeLead, drill, setDrill, sequences, steps } = useAppData()
   const nav = useNavigate()
-  const [startingFor, setStartingFor] = useState<Lead | null>(null)
   const [q, setQ] = useState('')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
@@ -282,9 +280,9 @@ export default function LeadsPage() {
                             }
                             if (l.stage === 'Negotiation') {
                               return (
-                                <button className="btn ghost" style={{ marginLeft: 'auto', padding: '5px 12px', fontSize: 12 }} onClick={() => setStartingFor(l)}>
-                                  + Start Follow-Up Sequence
-                                </button>
+                                <span className="small muted" style={{ marginLeft: 'auto' }}>
+                                  Follow-up sequence is being created automatically…
+                                </span>
                               )
                             }
                             return null
@@ -303,17 +301,6 @@ export default function LeadsPage() {
       <p className="small muted" style={{ marginTop: 8 }}>
         Times shown as <b>PK</b> with <span className="us">US Chicago</span> beneath. Ticket / High / Notes are saved to the shared database and preserved across imports.
       </p>
-      {startingFor && (
-        <StartSequenceModal
-          lead={startingFor}
-          onClose={() => setStartingFor(null)}
-          onStart={async (email, stepDefs) => {
-            await startFollowUp(startingFor.record_id, email, stepDefs)
-            setStartingFor(null)
-            nav('/follow-ups')
-          }}
-        />
-      )}
     </>
   )
 }

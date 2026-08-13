@@ -5,10 +5,14 @@ import {
   fetchSequences, fetchAllSteps, createSequence as apiCreateSequence,
   markStepDone as apiMarkStepDone, updateStepDate as apiUpdateStepDate,
   markSequenceStatus, updateSequenceEmail as apiUpdateSeqEmail,
-  updateLeadStageAndStatus,
+  updateLeadStageAndStatus, provisionSequences,
+  getManagerEmail, setManagerEmail as apiSetManagerEmail,
 } from '../lib/api'
 import { DEFAULT_RULE, type HighTicketRule, type Lead, type ManualPatch } from '../lib/leads'
-import { type FollowUpSequence, type FollowUpStep, STEP_CHANNELS } from '../lib/followups'
+import { type FollowUpSequence, type FollowUpStep, STEP_CHANNELS, defaultDates, todayIso } from '../lib/followups'
+
+// Every lead at this stage gets a follow-up sequence automatically.
+const FOLLOW_UP_STAGE = 'Negotiation'
 
 export interface Drill { label: string; test: (l: Lead) => boolean }
 
@@ -30,11 +34,13 @@ interface AppCtx {
   sequences: FollowUpSequence[]
   steps: FollowUpStep[]
   followUpError: string | null
-  startFollowUp: (leadId: string, email: string, steps: { scheduled_date: string; channels: string[] }[]) => Promise<void>
+  managerEmail: string
+  updateManagerEmail: (email: string) => Promise<void>
+  startFollowUp: (leadId: string, email: string | null, steps: { scheduled_date: string; channels: string[] }[]) => Promise<void>
   completeStep: (stepId: string, notes?: string) => Promise<void>
   rescheduleStep: (stepId: string, date: string) => Promise<void>
   resolveSequence: (sequenceId: string, outcome: 'won' | 'lost', leadRecordId: string) => Promise<void>
-  changeSequenceEmail: (sequenceId: string, email: string) => Promise<void>
+  changeSequenceEmail: (sequenceId: string, email: string | null) => Promise<void>
   refreshSequences: () => Promise<void>
 }
 
@@ -50,15 +56,38 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   const [sequences, setSequences] = useState<FollowUpSequence[]>([])
   const [steps, setSteps] = useState<FollowUpStep[]>([])
   const [followUpError, setFollowUpError] = useState<string | null>(null)
+  const [managerEmail, setManagerEmailState] = useState('')
 
   // Follow-up tables load independently of the core data. If they are missing or
   // erroring, we surface it as a warning but NEVER let it block leads from loading.
-  const loadSequences = async () => {
+  // `currentLeads` is passed explicitly because this may run before `leads` state
+  // has committed, and auto-provisioning needs the freshly-fetched list.
+  const loadSequences = async (currentLeads?: Lead[]) => {
     try {
-      const [seqs, allSteps] = await Promise.all([fetchSequences(), fetchAllSteps()])
+      const [seqs, allSteps, email] = await Promise.all([fetchSequences(), fetchAllSteps(), getManagerEmail()])
+      setManagerEmailState(email)
+      setFollowUpError(null)
+
+      // Auto-provision: every lead in the follow-up stage gets a sequence, with no
+      // manual step. Keyed on "has ANY sequence" (not just active) so a resolved
+      // lead is never silently re-enrolled.
+      const pool = currentLeads ?? leads
+      const enrolled = new Set(seqs.map((s) => s.lead_record_id))
+      const missing = pool.filter((l) => l.stage === FOLLOW_UP_STAGE && !enrolled.has(l.record_id)).map((l) => l.record_id)
+
+      if (missing.length) {
+        const dates = defaultDates(todayIso())
+        await provisionSequences(missing, () =>
+          STEP_CHANNELS.map((channels, i) => ({ scheduled_date: dates[i], channels: [...channels] })),
+        )
+        const [seqs2, steps2] = await Promise.all([fetchSequences(), fetchAllSteps()])
+        setSequences(seqs2)
+        setSteps(steps2)
+        return
+      }
+
       setSequences(seqs)
       setSteps(allSteps)
-      setFollowUpError(null)
     } catch (e) {
       setSequences([])
       setSteps([])
@@ -68,8 +97,10 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 
   const refresh = async () => {
     setLoading(true)
+    let fetched: Lead[] = []
     try {
       const [l, r, logo] = await Promise.all([fetchLeads(), getRule(), getLogo()])
+      fetched = l
       setLeads(l)
       setRule(r)
       setLogoUrl(logo)
@@ -79,10 +110,15 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     } finally {
       setLoading(false)
     }
-    await loadSequences()
+    await loadSequences(fetched)
   }
 
-  const refreshSequences = loadSequences
+  const refreshSequences = () => loadSequences()
+
+  const updateManagerEmail = async (email: string) => {
+    setManagerEmailState(email)
+    await apiSetManagerEmail(email)
+  }
 
   useEffect(() => { refresh() }, [])
 
@@ -119,20 +155,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 
   const startFollowUp: AppCtx['startFollowUp'] = async (leadId, email, stepDefs) => {
     const seq = await apiCreateSequence(leadId, email, stepDefs)
-    const newSteps: FollowUpStep[] = stepDefs.map((s, i) => ({
-      id: `tmp-${i}`,
-      sequence_id: seq.id,
-      step_number: i + 1,
-      scheduled_date: s.scheduled_date,
-      channels: s.channels,
-      status: 'pending',
-      completed_at: null,
-      notes: null,
-    }))
     setSequences((prev) => [seq, ...prev])
-    // Reload steps to get real IDs from the DB
-    const allSteps = await fetchAllSteps()
-    setSteps(allSteps)
+    // Reload steps so they carry their real DB ids.
+    setSteps(await fetchAllSteps())
   }
 
   const completeStep: AppCtx['completeStep'] = async (stepId, notes) => {
@@ -174,7 +199,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       leads, rule, logoUrl, loading, error, refresh,
       updateManual, addLead, removeLead, updateRule, updateLogo,
       drill, setDrill,
-      sequences, steps, followUpError,
+      sequences, steps, followUpError, managerEmail, updateManagerEmail,
       startFollowUp, completeStep, rescheduleStep, resolveSequence,
       changeSequenceEmail, refreshSequences,
     }}>

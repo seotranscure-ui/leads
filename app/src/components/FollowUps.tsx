@@ -2,11 +2,11 @@ import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAppData } from '../data/AppData'
 import {
-  CHANNEL_ICON, allDone, buildReminderMailto, isOverdue, isDueToday,
+  CHANNEL_ICON, allDone, buildReminderMailto, buildTestReminderMailto,
+  effectiveEmail, isOverdue, isDueToday,
   nextPending, type FollowUpSequence, type FollowUpStep,
 } from '../lib/followups'
 import { displayName, type Lead } from '../lib/leads'
-import StartSequenceModal from './StartSequenceModal'
 
 interface SeqRow {
   seq: FollowUpSequence
@@ -15,11 +15,10 @@ interface SeqRow {
 }
 
 export default function FollowUps() {
-  const { leads, sequences, steps, followUpError, startFollowUp, completeStep, rescheduleStep, resolveSequence, changeSequenceEmail } = useAppData()
+  const { leads, sequences, steps, followUpError, managerEmail, completeStep, rescheduleStep, resolveSequence, changeSequenceEmail } = useAppData()
   const nav = useNavigate()
 
   const [filter, setFilter] = useState<'active' | 'all'>('active')
-  const [startingFor, setStartingFor] = useState<Lead | null>(null)
   const [resolving, setResolving] = useState<SeqRow | null>(null)
   const [editingEmail, setEditingEmail] = useState<string | null>(null)
   const [editEmailVal, setEditEmailVal] = useState('')
@@ -58,11 +57,10 @@ export default function FollowUps() {
     [steps, sequences],
   )
 
-  // Negotiation leads without an active sequence (suggestion strip)
-  const negWithout = useMemo(() => {
-    const activeLeads = new Set(sequences.filter((s) => s.status === 'active').map((s) => s.lead_record_id))
-    return leads.filter((l) => l.stage === 'Negotiation' && !activeLeads.has(l.record_id)).slice(0, 5)
-  }, [leads, sequences])
+  const overrideCount = useMemo(
+    () => sequences.filter((s) => (s.manager_email ?? '').trim() !== '').length,
+    [sequences],
+  )
 
   const handleMarkDone = async () => {
     if (!markingDone) return
@@ -102,11 +100,12 @@ export default function FollowUps() {
     }
   }
 
+  // Blank clears the override so the sequence falls back to the Admin default.
   const saveEmail = async (seqId: string) => {
-    if (!editEmailVal.trim()) return
+    const val = editEmailVal.trim()
     setBusySeq(seqId)
     try {
-      await changeSequenceEmail(seqId, editEmailVal.trim())
+      await changeSequenceEmail(seqId, val === '' ? null : val)
       setEditingEmail(null)
     } catch (e) {
       alert('Could not update email: ' + (e instanceof Error ? e.message : String(e)))
@@ -138,28 +137,26 @@ export default function FollowUps() {
         </div>
       )}
 
-      {/* Suggestion strip: Negotiation leads without a sequence */}
-      {negWithout.length > 0 && filter === 'active' && (
-        <div className="note" style={{ marginBottom: 16 }}>
-          <b>Suggestion:</b> {negWithout.length} lead{negWithout.length > 1 ? 's are' : ' is'} in Negotiation with no active follow-up sequence:{' '}
-          {negWithout.map((l, i) => (
-            <span key={l.record_id}>
-              {i > 0 && ', '}
-              <a style={{ cursor: 'pointer' }} onClick={() => setStartingFor(l)}>{displayName(l)}</a>
-            </span>
-          ))}
-          {leads.filter((l) => l.stage === 'Negotiation' && !sequences.find((s) => s.status === 'active' && s.lead_record_id === l.record_id)).length > 5 && ' and more…'}
-          {' — '}
-          <a style={{ cursor: 'pointer' }} onClick={() => nav('/leads')}>view all in Leads</a>
-        </div>
-      )}
+      {/* Reminder-address summary */}
+      <div className="note" style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        {managerEmail.trim() ? (
+          <>
+            <span>Reminders go to <b>{managerEmail}</b>{overrideCount > 0 && <> · {overrideCount} lead{overrideCount > 1 ? 's have' : ' has'} a custom address</>}</span>
+            <a href={buildTestReminderMailto(managerEmail)} style={{ fontWeight: 700 }}>Send test reminder ↗</a>
+            <a onClick={() => nav('/admin')} style={{ cursor: 'pointer', marginLeft: 'auto' }}>Change in Admin</a>
+          </>
+        ) : (
+          <>
+            <span><b>No lead-manager email set.</b> Reminder buttons stay disabled until you add one.</span>
+            <a onClick={() => nav('/admin')} style={{ cursor: 'pointer', fontWeight: 700 }}>Set it in Admin →</a>
+          </>
+        )}
+      </div>
 
       {seqRows.length === 0 && (
         <div className="card" style={{ textAlign: 'center', padding: 40 }}>
-          <p className="muted">No {filter === 'active' ? 'active ' : ''}follow-up sequences yet.</p>
-          {filter === 'active' && (
-            <p className="small muted">Start one from the <a onClick={() => nav('/leads')} style={{ cursor: 'pointer' }}>Leads page</a> for any lead in Negotiation stage.</p>
-          )}
+          <p className="muted">No {filter === 'active' ? 'active ' : ''}follow-up sequences.</p>
+          <p className="small muted">Sequences are created automatically for every lead that reaches <b>Negotiation</b> stage.</p>
         </div>
       )}
 
@@ -169,6 +166,8 @@ export default function FollowUps() {
           const practice = lead?.practice ?? null
           const isDone = allDone(sSteps)
           const next = nextPending(sSteps)
+          const effEmail = effectiveEmail(seq, managerEmail)
+          const isOverride = (seq.manager_email ?? '').trim() !== ''
 
           return (
             <div key={seq.id} className="card" style={{ padding: 0 }}>
@@ -184,14 +183,15 @@ export default function FollowUps() {
                 </span>
               </div>
 
-              {/* Manager email */}
-              <div style={{ padding: '10px 18px', display: 'flex', alignItems: 'center', gap: 8, borderBottom: '1px solid var(--line)', background: 'var(--bg)' }}>
+              {/* Manager email — inherits the Admin default unless overridden for this lead */}
+              <div style={{ padding: '10px 18px', display: 'flex', alignItems: 'center', gap: 8, borderBottom: '1px solid var(--line)', background: 'var(--bg)', flexWrap: 'wrap' }}>
                 <span className="small muted" style={{ minWidth: 120 }}>Reminder email:</span>
                 {editingEmail === seq.id ? (
                   <>
                     <input
                       type="email"
                       value={editEmailVal}
+                      placeholder={managerEmail || 'manager@example.com'}
                       onChange={(e) => setEditEmailVal(e.target.value)}
                       style={{ flex: 1, maxWidth: 280 }}
                       onKeyDown={(e) => { if (e.key === 'Enter') saveEmail(seq.id); if (e.key === 'Escape') setEditingEmail(null) }}
@@ -199,15 +199,27 @@ export default function FollowUps() {
                     />
                     <button className="btn" style={{ padding: '5px 12px' }} onClick={() => saveEmail(seq.id)} disabled={busySeq === seq.id}>Save</button>
                     <button className="btn ghost" style={{ padding: '5px 10px' }} onClick={() => setEditingEmail(null)}>Cancel</button>
+                    <span className="small muted">Leave blank to use the Admin default.</span>
                   </>
                 ) : (
                   <>
-                    <span style={{ fontWeight: 600, fontSize: 13 }}>{seq.manager_email}</span>
+                    <span style={{ fontWeight: 600, fontSize: 13 }}>{effEmail || <span className="muted">not set</span>}</span>
+                    {isOverride
+                      ? <span className="chip" style={{ background: 'var(--brand-soft)', color: 'var(--brand-dark)' }}>custom</span>
+                      : <span className="chip">default</span>}
                     {seq.status === 'active' && (
-                      <button className="btn ghost" style={{ padding: '3px 10px', fontSize: 12 }}
-                        onClick={() => { setEditingEmail(seq.id); setEditEmailVal(seq.manager_email) }}>
-                        Edit
-                      </button>
+                      <>
+                        <button className="btn ghost" style={{ padding: '3px 10px', fontSize: 12 }}
+                          onClick={() => { setEditingEmail(seq.id); setEditEmailVal(seq.manager_email ?? '') }}>
+                          Edit
+                        </button>
+                        {effEmail && (
+                          <a href={buildTestReminderMailto(effEmail)} className="btn ghost"
+                             style={{ padding: '3px 10px', fontSize: 12, textDecoration: 'none' }}>
+                            Test
+                          </a>
+                        )}
+                      </>
                     )}
                   </>
                 )}
@@ -255,14 +267,21 @@ export default function FollowUps() {
                           {/* Actions for active pending steps */}
                           {step.status === 'pending' && seq.status === 'active' && (
                             <>
-                              <a
-                                href={buildReminderMailto(seq.manager_email, name, practice, step.step_number, step.scheduled_date, step.channels)}
-                                className="btn ghost"
-                                style={{ padding: '4px 10px', fontSize: 12, textDecoration: 'none' }}
-                                title="Open email client with pre-composed reminder"
-                              >
-                                ✉️ Send Reminder
-                              </a>
+                              {effEmail ? (
+                                <a
+                                  href={buildReminderMailto(effEmail, name, practice, step.step_number, step.scheduled_date, step.channels)}
+                                  className="btn ghost"
+                                  style={{ padding: '4px 10px', fontSize: 12, textDecoration: 'none' }}
+                                  title={'Open email client with a pre-composed reminder to ' + effEmail}
+                                >
+                                  ✉️ Send Reminder
+                                </a>
+                              ) : (
+                                <span className="btn ghost" style={{ padding: '4px 10px', fontSize: 12, opacity: .5, cursor: 'default' }}
+                                      title="Set a lead-manager email in Admin first">
+                                  ✉️ Send Reminder
+                                </span>
+                              )}
                               <button
                                 className="btn"
                                 style={{ padding: '4px 10px', fontSize: 12 }}
@@ -366,16 +385,6 @@ export default function FollowUps() {
         </div>
       )}
 
-      {startingFor && (
-        <StartSequenceModal
-          lead={startingFor}
-          onClose={() => setStartingFor(null)}
-          onStart={async (email, stepDefs) => {
-            await startFollowUp(startingFor.record_id, email, stepDefs)
-            setStartingFor(null)
-          }}
-        />
-      )}
     </>
   )
 }

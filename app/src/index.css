@@ -175,6 +175,12 @@ input.cell:focus{border-color:var(--brand);background:#fff;outline:none}
 
 /* follow-up channel chips */
 .fup-channel-chip{display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:20px;background:var(--brand-soft);color:var(--brand-dark);font-size:11px;font-weight:600;white-space:nowrap}
+/* per-channel toggle — each channel of a week is ticked off on its own */
+.fup-channel-toggle{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:20px;border:1px solid var(--line);background:#fff;color:var(--brand-dark);font-size:11.5px;font-weight:600;white-space:nowrap;cursor:pointer;font-family:inherit;transition:.12s}
+.fup-channel-toggle:hover:not(:disabled){border-color:var(--brand);background:var(--brand-soft)}
+.fup-channel-toggle.done{background:var(--green-soft);border-color:#cfe8a6;color:var(--green-ink)}
+.fup-channel-toggle.done:hover:not(:disabled){background:#e3f2cd;border-color:var(--green-ink)}
+.fup-channel-toggle:disabled{cursor:default;opacity:.7}
 /* follow-up sequence status chips */
 .fup-status-active{background:#e7e9fb;color:#3b3a86}
 .fup-status-won{background:var(--green-soft);color:var(--green-ink)}

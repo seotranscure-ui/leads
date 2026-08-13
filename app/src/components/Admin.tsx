@@ -1,11 +1,11 @@
 import { useEffect, useState, type ChangeEvent } from 'react'
 import { useAppData } from '../data/AppData'
 import { ruleLabel, type HighTicketRule } from '../lib/leads'
-import { buildTestReminderMailto } from '../lib/followups'
+import { fetchReminderLog, type ReminderLog } from '../lib/api'
 import Logo from './Logo'
 
 export default function Admin() {
-  const { logoUrl, updateLogo, rule, updateRule, managerEmail, updateManagerEmail, sequences } = useAppData()
+  const { logoUrl, updateLogo, rule, updateRule, managerEmail, updateManagerEmail, sequences, automation, updateAutomation } = useAppData()
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
 
@@ -15,6 +15,26 @@ export default function Admin() {
   useEffect(() => { setEmail(managerEmail) }, [managerEmail])
 
   const overrideCount = sequences.filter((s) => (s.manager_email ?? '').trim() !== '').length
+
+  // Automatic-reminder settings + the send log (the proof the cron job is alive).
+  const [auto, setAuto] = useState(automation)
+  const [autoMsg, setAutoMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
+  const [log, setLog] = useState<ReminderLog[] | null>(null)
+  useEffect(() => { setAuto(automation) }, [automation])
+  useEffect(() => { fetchReminderLog(20).then(setLog).catch(() => setLog([])) }, [])
+
+  const saveAuto = async () => {
+    if (auto.graceDays < 1 || auto.graceDays > 90) {
+      setAutoMsg({ kind: 'err', text: 'Grace period must be between 1 and 90 days.' }); return
+    }
+    setAutoMsg(null)
+    try {
+      await updateAutomation(auto)
+      setAutoMsg({ kind: 'ok', text: 'Reminder settings saved.' })
+    } catch (e) {
+      setAutoMsg({ kind: 'err', text: e instanceof Error ? e.message : String(e) })
+    }
+  }
 
   const saveEmail = async () => {
     const v = email.trim()
@@ -124,23 +144,93 @@ export default function Admin() {
           style={{ width: 280 }}
         />
         <button className="btn" onClick={saveEmail}>Save email</button>
-        {managerEmail.trim() && (
-          <a className="btn ghost" href={buildTestReminderMailto(managerEmail)} style={{ textDecoration: 'none' }}>
-            Send test reminder
-          </a>
-        )}
       </div>
       <div className="small muted">
         Current: <b>{managerEmail.trim() || 'not set'}</b>
         {overrideCount > 0 && <> · {overrideCount} lead{overrideCount > 1 ? 's' : ''} with a custom address (unaffected by this setting)</>}
       </div>
-      <div className="note" style={{ marginTop: 12 }}>
-        <b>How reminders are sent.</b> "Send test reminder" and the per-step reminder buttons open a pre-composed
-        message in your own email client, which you then send. The tool does not send mail on a schedule by itself —
-        that would need a mail service connected to the database. The Follow-Ups tab and the badge in the header are
-        what tell you when a step is due.
-      </div>
       {emailMsg && <div className={'note ' + (emailMsg.kind === 'ok' ? 'ok' : 'err')} style={{ marginTop: 12 }}>{emailMsg.text}</div>}
+    </div>
+
+    <h2 className="section">Follow-ups — Automatic reminders</h2>
+    <div className="card" style={{ maxWidth: 660 }}>
+      <p className="small muted">
+        The server emails a digest of everything outstanding once a day, over Transcure's own SMTP server. A week keeps
+        appearing in that digest until <b>every</b> one of its channels is ticked off, and repeats daily while overdue.
+        Nobody needs to have the tool open.
+      </p>
+
+      <div className="controls" style={{ marginBottom: 10 }}>
+        <label className="small" style={{ display: 'flex', alignItems: 'center', gap: 7, fontWeight: 600 }}>
+          <input type="checkbox" checked={auto.enabled}
+                 onChange={(e) => setAuto({ ...auto, enabled: e.target.checked })} />
+          Send reminders automatically
+        </label>
+      </div>
+
+      <div className="controls" style={{ marginBottom: 10 }}>
+        <label className="small muted">Send at</label>
+        <select value={auto.digestHour} onChange={(e) => setAuto({ ...auto, digestHour: Number(e.target.value) })}>
+          {Array.from({ length: 24 }, (_, h) => (
+            <option key={h} value={h}>{String(h).padStart(2, '0')}:00</option>
+          ))}
+        </select>
+        <span className="small muted">Pakistan time</span>
+
+        <label className="small muted" style={{ marginLeft: 12 }}>Mark Lost after</label>
+        <input type="number" min="1" max="90" value={auto.graceDays} style={{ width: 74 }}
+               onChange={(e) => setAuto({ ...auto, graceDays: Number(e.target.value) })} />
+        <span className="small muted">days with no outcome recorded</span>
+      </div>
+
+      <div className="controls" style={{ marginBottom: 10 }}>
+        <label className="small" style={{ display: 'flex', alignItems: 'center', gap: 7, fontWeight: 600 }}>
+          <input type="checkbox" checked={auto.remindOverdueDaily}
+                 onChange={(e) => setAuto({ ...auto, remindOverdueDaily: e.target.checked })} />
+          Keep reminding daily while overdue
+        </label>
+        <button className="btn" onClick={saveAuto} style={{ marginLeft: 'auto' }}>Save settings</button>
+      </div>
+
+      <div className="note" style={{ marginTop: 4 }}>
+        <b>Changing the send time also needs a cron update.</b> The hour above is what the app displays and what the job
+        assumes; the actual trigger lives in Supabase. After changing it, re-run
+        <code> app/supabase/migrations/004_cron_schedule.sql</code> with the new hour converted to UTC (Pakistan is UTC+5,
+        so subtract 5).
+      </div>
+
+      {autoMsg && <div className={'note ' + (autoMsg.kind === 'ok' ? 'ok' : 'err')} style={{ marginTop: 12 }}>{autoMsg.text}</div>}
+
+      <h3 style={{ fontSize: 13, fontWeight: 700, margin: '20px 0 8px' }}>Recent sends</h3>
+      {log === null ? (
+        <div className="small muted">Loading…</div>
+      ) : log.length === 0 ? (
+        <div className="small muted">
+          Nothing sent yet. Once the cron job is scheduled, every send is recorded here — the quickest way to confirm
+          the job is actually running.
+        </div>
+      ) : (
+        <div className="tablewrap" style={{ maxHeight: 260 }}>
+          <table>
+            <thead><tr><th>When</th><th>To</th><th>Kind</th><th className="right">Items</th><th>Status</th></tr></thead>
+            <tbody>
+              {log.map((r) => (
+                <tr key={r.id}>
+                  <td className="small">{r.created_at.slice(0, 16).replace('T', ' ')}</td>
+                  <td className="small">{r.recipient}</td>
+                  <td className="small">{r.kind}</td>
+                  <td className="right small">{r.step_count}</td>
+                  <td className="small">
+                    {r.status === 'sent'
+                      ? <span style={{ color: 'var(--green-ink)', fontWeight: 700 }}>sent</span>
+                      : <span style={{ color: 'var(--warn)', fontWeight: 700 }} title={r.error ?? ''}>failed</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
 
     <h2 className="section">Branding — Logo</h2>

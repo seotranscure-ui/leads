@@ -7,6 +7,9 @@ import {
   markSequenceStatus, updateSequenceEmail as apiUpdateSeqEmail,
   updateLeadStageAndStatus, provisionSequences,
   getManagerEmail, setManagerEmail as apiSetManagerEmail,
+  setStepChannels as apiSetStepChannels,
+  getAutomation, setAutomation as apiSetAutomation,
+  DEFAULT_AUTOMATION, type Automation,
 } from '../lib/api'
 import { DEFAULT_RULE, type HighTicketRule, type Lead, type ManualPatch } from '../lib/leads'
 import { type FollowUpSequence, type FollowUpStep, STEP_CHANNELS, defaultDates, todayIso } from '../lib/followups'
@@ -36,6 +39,9 @@ interface AppCtx {
   followUpError: string | null
   managerEmail: string
   updateManagerEmail: (email: string) => Promise<void>
+  automation: Automation
+  updateAutomation: (a: Automation) => Promise<void>
+  toggleChannel: (stepId: string, channel: string) => Promise<void>
   startFollowUp: (leadId: string, email: string | null, steps: { scheduled_date: string; channels: string[] }[]) => Promise<void>
   completeStep: (stepId: string, notes?: string) => Promise<void>
   rescheduleStep: (stepId: string, date: string) => Promise<void>
@@ -57,6 +63,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   const [steps, setSteps] = useState<FollowUpStep[]>([])
   const [followUpError, setFollowUpError] = useState<string | null>(null)
   const [managerEmail, setManagerEmailState] = useState('')
+  const [automation, setAutomationState] = useState<Automation>(DEFAULT_AUTOMATION)
 
   // Follow-up tables load independently of the core data. If they are missing or
   // erroring, we surface it as a warning but NEVER let it block leads from loading.
@@ -64,8 +71,11 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   // has committed, and auto-provisioning needs the freshly-fetched list.
   const loadSequences = async (currentLeads?: Lead[]) => {
     try {
-      const [seqs, allSteps, email] = await Promise.all([fetchSequences(), fetchAllSteps(), getManagerEmail()])
+      const [seqs, allSteps, email, auto] = await Promise.all([
+        fetchSequences(), fetchAllSteps(), getManagerEmail(), getAutomation(),
+      ])
       setManagerEmailState(email)
+      setAutomationState(auto)
       setFollowUpError(null)
 
       // Auto-provision: every lead in the follow-up stage gets a sequence, with no
@@ -120,6 +130,31 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     await apiSetManagerEmail(email)
   }
 
+  const updateAutomation = async (a: Automation) => {
+    setAutomationState(a)
+    await apiSetAutomation(a)
+  }
+
+  // Tick one channel of a week on/off. The week is finished only when every one
+  // of its channels is ticked, which is exactly what the reminder job checks.
+  const toggleChannel: AppCtx['toggleChannel'] = async (stepId, channel) => {
+    const step = steps.find((s) => s.id === stepId)
+    if (!step) return
+    const current = step.completed_channels ?? []
+    const next = current.includes(channel) ? current.filter((c) => c !== channel) : [...current, channel]
+    const done = step.channels.every((c) => next.includes(c))
+
+    setSteps((prev) => prev.map((s) => s.id === stepId
+      ? { ...s, completed_channels: next, status: done ? 'done' : 'pending', completed_at: done ? new Date().toISOString() : null }
+      : s))
+    try {
+      await apiSetStepChannels(stepId, next, step.channels)
+    } catch (e) {
+      await refreshSequences()
+      alert('Could not save that change: ' + (e instanceof Error ? e.message : String(e)))
+    }
+  }
+
   useEffect(() => { refresh() }, [])
 
   const updateManual: AppCtx['updateManual'] = async (recordId, patch) => {
@@ -160,10 +195,15 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     setSteps(await fetchAllSteps())
   }
 
+  // Tick every remaining channel of a week at once.
   const completeStep: AppCtx['completeStep'] = async (stepId, notes) => {
-    setSteps((prev) => prev.map((s) => s.id === stepId ? { ...s, status: 'done', completed_at: new Date().toISOString(), notes: notes ?? null } : s))
+    const step = steps.find((s) => s.id === stepId)
+    if (!step) return
+    setSteps((prev) => prev.map((s) => s.id === stepId
+      ? { ...s, completed_channels: [...s.channels], status: 'done', completed_at: new Date().toISOString(), notes: notes ?? null }
+      : s))
     try {
-      await apiMarkStepDone(stepId, notes)
+      await apiMarkStepDone(stepId, step.channels, notes)
     } catch (e) {
       await refreshSequences()
       throw e
@@ -200,6 +240,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       updateManual, addLead, removeLead, updateRule, updateLogo,
       drill, setDrill,
       sequences, steps, followUpError, managerEmail, updateManagerEmail,
+      automation, updateAutomation, toggleChannel,
       startFollowUp, completeStep, rescheduleStep, resolveSequence,
       changeSequenceEmail, refreshSequences,
     }}>

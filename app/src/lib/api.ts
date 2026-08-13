@@ -241,11 +241,73 @@ export async function setManagerEmail(email: string): Promise<void> {
   if (error) throw error
 }
 
-export async function markStepDone(stepId: string, notes?: string): Promise<void> {
+export async function markStepDone(stepId: string, channels: string[], notes?: string): Promise<void> {
   const { error } = await supabase
     .from('follow_up_steps')
-    .update({ status: 'done', completed_at: new Date().toISOString(), notes: notes ?? null })
+    .update({ status: 'done', completed_channels: channels, completed_at: new Date().toISOString(), notes: notes ?? null })
     .eq('id', stepId)
+  if (error) throw error
+}
+
+// Tick one channel of a week off (or back on). `status` stays in sync so the
+// reminder job and the UI agree on when a week is finished.
+export async function setStepChannels(stepId: string, completed: string[], all: string[]): Promise<void> {
+  const done = all.every((c) => completed.includes(c))
+  const { error } = await supabase
+    .from('follow_up_steps')
+    .update({
+      completed_channels: completed,
+      status: done ? 'done' : 'pending',
+      completed_at: done ? new Date().toISOString() : null,
+    })
+    .eq('id', stepId)
+  if (error) throw error
+}
+
+export interface ReminderLog {
+  id: string
+  sent_on: string
+  recipient: string
+  kind: string
+  subject: string | null
+  step_count: number
+  status: string
+  error: string | null
+  created_at: string
+}
+
+export async function fetchReminderLog(limit = 20): Promise<ReminderLog[]> {
+  const { data, error } = await supabase
+    .from('follow_up_reminders')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(limit)
+  if (error) throw error
+  return (data ?? []) as ReminderLog[]
+}
+
+export interface Automation {
+  enabled: boolean
+  digestHour: number
+  timezone: string
+  graceDays: number
+  remindOverdueDaily: boolean
+}
+export const DEFAULT_AUTOMATION: Automation = {
+  enabled: true, digestHour: 9, timezone: 'Asia/Karachi', graceDays: 7, remindOverdueDaily: true,
+}
+
+export async function getAutomation(): Promise<Automation> {
+  const { data } = await supabase.from('app_settings').select('value').eq('key', 'follow_up_automation').maybeSingle()
+  const v = data?.value
+  if (v && typeof v === 'object') return { ...DEFAULT_AUTOMATION, ...(v as Partial<Automation>) }
+  return DEFAULT_AUTOMATION
+}
+
+export async function setAutomation(a: Automation): Promise<void> {
+  const { error } = await supabase
+    .from('app_settings')
+    .upsert({ key: 'follow_up_automation', value: a as unknown as object, updated_at: new Date().toISOString() })
   if (error) throw error
 }
 

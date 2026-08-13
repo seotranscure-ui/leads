@@ -2,8 +2,8 @@ import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAppData } from '../data/AppData'
 import {
-  CHANNEL_ICON, allDone, buildReminderMailto, buildTestReminderMailto,
-  effectiveEmail, isOverdue, isDueToday,
+  CHANNEL_ICON, allDone, buildTestReminderMailto,
+  effectiveEmail, isOverdue, isDueToday, isChannelDone, pendingChannels, stepComplete,
   nextPending, type FollowUpSequence, type FollowUpStep,
 } from '../lib/followups'
 import { displayName, type Lead } from '../lib/leads'
@@ -15,7 +15,7 @@ interface SeqRow {
 }
 
 export default function FollowUps() {
-  const { leads, sequences, steps, followUpError, managerEmail, completeStep, rescheduleStep, resolveSequence, changeSequenceEmail } = useAppData()
+  const { leads, sequences, steps, followUpError, managerEmail, automation, toggleChannel, completeStep, rescheduleStep, resolveSequence, changeSequenceEmail } = useAppData()
   const nav = useNavigate()
 
   const [filter, setFilter] = useState<'active' | 'all'>('active')
@@ -141,13 +141,17 @@ export default function FollowUps() {
       <div className="note" style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         {managerEmail.trim() ? (
           <>
-            <span>Reminders go to <b>{managerEmail}</b>{overrideCount > 0 && <> · {overrideCount} lead{overrideCount > 1 ? 's have' : ' has'} a custom address</>}</span>
-            <a href={buildTestReminderMailto(managerEmail)} style={{ fontWeight: 700 }}>Send test reminder ↗</a>
+            <span>
+              {automation.enabled
+                ? <>Daily reminder emails go out automatically at <b>{String(automation.digestHour).padStart(2, '0')}:00</b> to <b>{managerEmail}</b></>
+                : <>Automatic reminders are <b>paused</b>. Recipient would be <b>{managerEmail}</b></>}
+              {overrideCount > 0 && <> · {overrideCount} lead{overrideCount > 1 ? 's have' : ' has'} a custom address</>}
+            </span>
             <a onClick={() => nav('/admin')} style={{ cursor: 'pointer', marginLeft: 'auto' }}>Change in Admin</a>
           </>
         ) : (
           <>
-            <span><b>No lead-manager email set.</b> Reminder buttons stay disabled until you add one.</span>
+            <span><b>No lead-manager email set.</b> No reminders will be sent until you add one.</span>
             <a onClick={() => nav('/admin')} style={{ cursor: 'pointer', fontWeight: 700 }}>Set it in Admin →</a>
           </>
         )}
@@ -213,12 +217,6 @@ export default function FollowUps() {
                           onClick={() => { setEditingEmail(seq.id); setEditEmailVal(seq.manager_email ?? '') }}>
                           Edit
                         </button>
-                        {effEmail && (
-                          <a href={buildTestReminderMailto(effEmail)} className="btn ghost"
-                             style={{ padding: '3px 10px', fontSize: 12, textDecoration: 'none' }}>
-                            Test
-                          </a>
-                        )}
                       </>
                     )}
                   </>
@@ -231,15 +229,17 @@ export default function FollowUps() {
                   const overdue = isOverdue(step)
                   const dueToday = isDueToday(step)
                   const isNext = next?.id === step.id
-                  const stepBg = step.status === 'done' ? 'var(--green-soft)' : overdue ? '#fbe8ea' : dueToday ? '#fff9e6' : isNext ? 'var(--brand-soft)' : '#f9f8fc'
+                  const complete = stepComplete(step)
+                  const pending = pendingChannels(step)
+                  const editable = !complete && seq.status === 'active'
+                  const stepBg = complete ? 'var(--green-soft)' : overdue ? '#fbe8ea' : dueToday ? '#fff9e6' : isNext ? 'var(--brand-soft)' : '#f9f8fc'
 
                   return (
                     <div key={step.id} style={{ background: stepBg, borderRadius: 10, padding: '10px 14px', border: '1px solid ' + (overdue ? '#f3b6bd' : dueToday ? '#f5d978' : isNext ? 'var(--brand-soft2)' : 'var(--line)') }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                         <div style={{ minWidth: 54, fontWeight: 700, fontSize: 12, color: 'var(--brand-dark)' }}>Week {step.step_number}</div>
 
-                        {/* Date: editable when pending */}
-                        {step.status === 'pending' && seq.status === 'active' ? (
+                        {editable ? (
                           <input
                             type="date"
                             defaultValue={step.scheduled_date}
@@ -251,46 +251,41 @@ export default function FollowUps() {
                           <span style={{ fontSize: 13, fontWeight: 600 }}>{step.scheduled_date}</span>
                         )}
 
-                        {/* Channels */}
+                        {/* Each channel ticks off on its own — the week is finished only
+                            when all of them are, and reminders name whatever is left. */}
                         <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-                          {step.channels.map((ch) => (
-                            <span key={ch} className="fup-channel-chip">{CHANNEL_ICON[ch]} {ch}</span>
-                          ))}
+                          {step.channels.map((ch) => {
+                            const chDone = isChannelDone(step, ch)
+                            return (
+                              <button
+                                key={ch}
+                                className={'fup-channel-toggle' + (chDone ? ' done' : '')}
+                                disabled={seq.status !== 'active'}
+                                title={seq.status !== 'active' ? ch : chDone ? `${ch} done — click to undo` : `Mark ${ch} as done`}
+                                onClick={() => toggleChannel(step.id, ch)}
+                              >
+                                <span>{chDone ? '✓' : CHANNEL_ICON[ch]}</span> {ch}
+                              </button>
+                            )
+                          })}
                         </div>
 
-                        {/* Status badge */}
                         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
-                          {step.status === 'done' && <span className="chip" style={{ background: 'var(--green-soft)', color: 'var(--green-ink)' }}>✓ Done</span>}
+                          {complete && <span className="chip" style={{ background: 'var(--green-soft)', color: 'var(--green-ink)' }}>✓ Done</span>}
                           {overdue && <span className="chip" style={{ background: '#fbe2e4', color: '#a01b2c' }}>Overdue</span>}
                           {dueToday && <span className="chip" style={{ background: '#fff3cd', color: '#856404' }}>Due today</span>}
-
-                          {/* Actions for active pending steps */}
-                          {step.status === 'pending' && seq.status === 'active' && (
-                            <>
-                              {effEmail ? (
-                                <a
-                                  href={buildReminderMailto(effEmail, name, practice, step.step_number, step.scheduled_date, step.channels)}
-                                  className="btn ghost"
-                                  style={{ padding: '4px 10px', fontSize: 12, textDecoration: 'none' }}
-                                  title={'Open email client with a pre-composed reminder to ' + effEmail}
-                                >
-                                  ✉️ Send Reminder
-                                </a>
-                              ) : (
-                                <span className="btn ghost" style={{ padding: '4px 10px', fontSize: 12, opacity: .5, cursor: 'default' }}
-                                      title="Set a lead-manager email in Admin first">
-                                  ✉️ Send Reminder
-                                </span>
-                              )}
-                              <button
-                                className="btn"
-                                style={{ padding: '4px 10px', fontSize: 12 }}
-                                disabled={busyStep === step.id}
-                                onClick={() => { setMarkingDone({ stepId: step.id, seqId: seq.id }); setDoneNotes('') }}
-                              >
-                                Mark Done
-                              </button>
-                            </>
+                          {!complete && pending.length < step.channels.length && (
+                            <span className="small muted">{pending.length} left</span>
+                          )}
+                          {editable && (
+                            <button
+                              className="btn"
+                              style={{ padding: '4px 10px', fontSize: 12 }}
+                              disabled={busyStep === step.id}
+                              onClick={() => { setMarkingDone({ stepId: step.id, seqId: seq.id }); setDoneNotes('') }}
+                            >
+                              All done
+                            </button>
                           )}
                         </div>
                       </div>

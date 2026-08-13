@@ -36,9 +36,25 @@ export interface FollowUpStep {
   step_number: number
   scheduled_date: string
   channels: string[]
+  // Channels ticked off so far. A week counts as done only once this covers
+  // every entry in `channels` — reminders keep naming whatever is left.
+  completed_channels: string[]
   status: 'pending' | 'done' | 'skipped'
   completed_at: string | null
   notes: string | null
+}
+
+export function pendingChannels(step: FollowUpStep): string[] {
+  const done = new Set(step.completed_channels ?? [])
+  return (step.channels ?? []).filter((c) => !done.has(c))
+}
+
+export function isChannelDone(step: FollowUpStep, channel: string): boolean {
+  return (step.completed_channels ?? []).includes(channel)
+}
+
+export function stepComplete(step: FollowUpStep): boolean {
+  return pendingChannels(step).length === 0
 }
 
 export function todayIso(): string {
@@ -55,19 +71,19 @@ export function defaultDates(startIso: string): string[] {
 }
 
 export function isOverdue(step: FollowUpStep): boolean {
-  return step.status === 'pending' && step.scheduled_date < todayIso()
+  return !stepComplete(step) && step.scheduled_date < todayIso()
 }
 
 export function isDueToday(step: FollowUpStep): boolean {
-  return step.status === 'pending' && step.scheduled_date === todayIso()
+  return !stepComplete(step) && step.scheduled_date === todayIso()
 }
 
 export function allDone(steps: FollowUpStep[]): boolean {
-  return steps.length === 5 && steps.every((s) => s.status !== 'pending')
+  return steps.length === 5 && steps.every(stepComplete)
 }
 
 export function nextPending(steps: FollowUpStep[]): FollowUpStep | null {
-  return steps.find((s) => s.status === 'pending') ?? null
+  return steps.find((s) => !stepComplete(s)) ?? null
 }
 
 export function buildReminderMailto(

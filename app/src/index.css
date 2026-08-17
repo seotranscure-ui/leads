@@ -185,3 +185,12 @@ input.cell:focus{border-color:var(--brand);background:#fff;outline:none}
 .fup-status-active{background:#e7e9fb;color:#3b3a86}
 .fup-status-won{background:var(--green-soft);color:var(--green-ink)}
 .fup-status-lost{background:#fbe2e4;color:#a01b2c}
+/* follow-up table: lead rows, and the 5 week rows revealed beneath one */
+.fup-row-overdue>td{background:#fdf1f2}
+.fup-row-today>td{background:#fffaeb}
+tbody tr.fup-row-overdue:hover>td{background:#fbe8ea}
+tbody tr.fup-row-today:hover>td{background:#fff6dd}
+tr.fup-steprow>td{background:var(--brand-soft);border-bottom:1px solid var(--brand-soft2);padding-top:7px;padding-bottom:7px;vertical-align:middle}
+tbody tr.fup-steprow:hover>td{background:var(--brand-soft2)}
+/* one pill per week, colored by that week's state */
+.fup-week-pill{display:inline-block;width:17px;height:7px;border-radius:4px}

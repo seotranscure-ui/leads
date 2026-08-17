@@ -25,9 +25,38 @@ import { SMTPClient } from 'https://deno.land/x/denomailer@1.6.0/mod.ts'
 const env = (k: string, fallback = ''): string => Deno.env.get(k) ?? fallback
 
 const SUPABASE_URL = env('SUPABASE_URL')
-const SERVICE_KEY = env('SUPABASE_SERVICE_ROLE_KEY')
 const APP_URL = env('APP_URL', 'https://transcure-leads.vercel.app').replace(/\/+$/, '')
 const CRON_SECRET = env('CRON_SECRET')
+
+// Supabase is migrating from SUPABASE_SERVICE_ROLE_KEY to SUPABASE_SECRET_KEYS
+// (a JSON dictionary of keys, issued via JWT Signing Keys). The old variable is
+// deprecated and is not populated on projects that have moved over, so accept
+// either — preferring the new one where both exist.
+function resolveServiceKey(): string {
+  const raw = env('SUPABASE_SECRET_KEYS')
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw)
+      if (typeof parsed === 'string' && parsed) return parsed
+      if (parsed && typeof parsed === 'object') {
+        // Prefer a conventionally-named entry, else take the first usable string.
+        for (const k of ['service_role', 'secret', 'default']) {
+          const v = (parsed as Record<string, unknown>)[k]
+          if (typeof v === 'string' && v) return v
+        }
+        for (const v of Object.values(parsed as Record<string, unknown>)) {
+          if (typeof v === 'string' && v) return v
+        }
+      }
+    } catch {
+      // Not JSON — some projects expose it as a bare key string.
+      return raw
+    }
+  }
+  return env('SUPABASE_SERVICE_ROLE_KEY')
+}
+
+const SERVICE_KEY = resolveServiceKey()
 
 interface Automation {
   enabled: boolean
@@ -234,6 +263,19 @@ Deno.serve(async (req: Request) => {
     if (given !== CRON_SECRET) {
       return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json' } })
     }
+  }
+
+  if (!SERVICE_KEY) {
+    return Response.json({
+      ok: false,
+      error: 'No service key available. Neither SUPABASE_SECRET_KEYS nor SUPABASE_SERVICE_ROLE_KEY is set — both are normally injected automatically, so check the function is deployed to the right project.',
+    }, { status: 500 })
+  }
+  if (!env('SMTP_HOST')) {
+    return Response.json({
+      ok: false,
+      error: 'SMTP_HOST is not set. Add the SMTP_* secrets under Project Settings -> Edge Functions -> Secrets, then redeploy.',
+    }, { status: 500 })
   }
 
   const db = createClient(SUPABASE_URL, SERVICE_KEY)

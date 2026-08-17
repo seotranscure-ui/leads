@@ -24,24 +24,41 @@ Leave `004_cron_schedule.sql` until step 4 — it needs the function deployed fi
 
 ## 2. Set the secrets
 
-You need these from whoever runs Transcure's mail server. **Do not put them in `app_settings`** — every signed-in user can read that table. Edge Function secrets are not exposed to the browser.
+Transcure's mail settings are already filled in. The only thing you supply is the mailbox password.
 
 ```bash
-supabase secrets set \
-  SMTP_HOST=mail.transcure.com \
-  SMTP_PORT=587 \
-  SMTP_USER=notifications@transcure.com \
-  SMTP_PASS='<password>' \
-  SMTP_FROM='Transcure Lead Tracker <notifications@transcure.com>' \
-  APP_URL=https://transcure-leads.vercel.app \
-  CRON_SECRET="$(openssl rand -hex 24)"
+chmod +x setup-secrets.sh
+./setup-secrets.sh
 ```
+
+The script prompts for the password, reads it without echoing, pipes it straight into Supabase's encrypted secret store, and unsets it. It is never written to disk and never committed.
+
+**Do not paste the password into a chat, a ticket, or a file in this repo.** Anything typed into a chat persists in that transcript; anything committed persists in git history even after deletion. Run the script yourself.
+
+What it sets:
+
+| Secret | Value |
+|---|---|
+| `SMTP_HOST` | `mail.transcure.biz` |
+| `SMTP_PORT` | `587` (STARTTLS) |
+| `SMTP_USER` | `muhammad.danish@transcure.biz` |
+| `SMTP_PASS` | *prompted* |
+| `SMTP_FROM` | `Transcure Lead Tracker <muhammad.danish@transcure.biz>` |
+| `APP_URL` | `https://transcure-leads.vercel.app` |
+| `CRON_SECRET` | generated, printed once |
 
 Notes:
 
-- **Port 587** uses STARTTLS (the common case). For **port 465** add `SMTP_TLS=true`.
-- `CRON_SECRET` — keep the generated value; step 4 needs it. It's what stops anyone who finds the function URL from triggering sends.
-- `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are injected automatically — don't set them.
+- **Never put SMTP credentials in `app_settings`.** RLS grants every authenticated user read access to that table, so a password there would be readable by the whole team and reachable from the browser. Edge Function secrets are server-side only.
+- **Port 587** uses STARTTLS. If `mail.transcure.biz` wants implicit TLS instead, change `SMTP_PORT` to `465` in the script — the function auto-detects TLS on 465.
+- `CRON_SECRET` is printed once. Copy it — step 5 needs it and Supabase won't show it again.
+- `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are injected automatically. Don't set them.
+
+Prefer clicking? **Project Settings → Edge Functions → Secrets** takes the same names and values.
+
+### A note on using a personal mailbox
+
+`muhammad.danish@transcure.biz` is a person's account. It works, but a dedicated mailbox (`no-reply@transcure.biz`) is worth considering: reminders break silently when a personal password rotates or the account is disabled, and mail to the team will appear to come from Danish personally. To switch later, change `SMTP_USER`/`SMTP_FROM` in the script and re-run it.
 
 ## 3. Deploy
 

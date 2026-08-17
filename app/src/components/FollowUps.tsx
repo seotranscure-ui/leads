@@ -1,10 +1,10 @@
-import { useMemo, useState } from 'react'
+import { Fragment, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAppData } from '../data/AppData'
 import {
-  CHANNEL_ICON, allDone, buildTestReminderMailto,
-  effectiveEmail, isOverdue, isDueToday, isChannelDone, pendingChannels, stepComplete,
-  nextPending, type FollowUpSequence, type FollowUpStep,
+  CHANNEL_ICON, allDone, effectiveEmail, isOverdue, isDueToday,
+  isChannelDone, pendingChannels, stepComplete, nextPending, todayIso,
+  type FollowUpSequence, type FollowUpStep,
 } from '../lib/followups'
 import { displayName, type Lead } from '../lib/leads'
 
@@ -12,13 +12,28 @@ interface SeqRow {
   seq: FollowUpSequence
   lead: Lead | null
   steps: FollowUpStep[]
+  /** Channels ticked off across all 5 weeks, and the total. */
+  doneChannels: number
+  totalChannels: number
+  next: FollowUpStep | null
+  /** Days the next outstanding step is past due; 0 if due today or later. */
+  overdueDays: number
+  finished: boolean
 }
 
+const daysBetween = (a: string, b: string): number =>
+  Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 86_400_000)
+
 export default function FollowUps() {
-  const { leads, sequences, steps, followUpError, managerEmail, automation, toggleChannel, completeStep, rescheduleStep, resolveSequence, changeSequenceEmail } = useAppData()
+  const {
+    leads, sequences, steps, followUpError, managerEmail, automation,
+    toggleChannel, completeStep, rescheduleStep, resolveSequence, changeSequenceEmail,
+  } = useAppData()
   const nav = useNavigate()
 
   const [filter, setFilter] = useState<'active' | 'all'>('active')
+  const [q, setQ] = useState('')
+  const [open, setOpen] = useState<Set<string>>(() => new Set())
   const [resolving, setResolving] = useState<SeqRow | null>(null)
   const [editingEmail, setEditingEmail] = useState<string | null>(null)
   const [editEmailVal, setEditEmailVal] = useState('')
@@ -38,16 +53,38 @@ export default function FollowUps() {
     return m
   }, [steps])
 
-  const seqRows: SeqRow[] = useMemo(() =>
-    sequences
+  // One row per lead, ordered as a work queue: most overdue first, then by what
+  // falls due soonest, then finished sequences awaiting a decision.
+  const rows: SeqRow[] = useMemo(() => {
+    const today = todayIso()
+    const term = q.trim().toLowerCase()
+
+    const built = sequences
       .filter((s) => filter === 'all' || s.status === 'active')
-      .map((s) => ({
-        seq: s,
-        lead: leadMap.get(s.lead_record_id) ?? null,
-        steps: (stepsBySeq.get(s.id) ?? []).sort((a, b) => a.step_number - b.step_number),
-      })),
-    [sequences, filter, leadMap, stepsBySeq],
-  )
+      .map((seq) => {
+        const lead = leadMap.get(seq.lead_record_id) ?? null
+        const sSteps = (stepsBySeq.get(seq.id) ?? []).sort((a, b) => a.step_number - b.step_number)
+        const totalChannels = sSteps.reduce((n, s) => n + s.channels.length, 0)
+        const doneChannels = sSteps.reduce((n, s) => n + s.channels.filter((c) => isChannelDone(s, c)).length, 0)
+        const next = nextPending(sSteps)
+        const overdueDays = next && next.scheduled_date < today ? daysBetween(next.scheduled_date, today) : 0
+        return { seq, lead, steps: sSteps, doneChannels, totalChannels, next, overdueDays, finished: allDone(sSteps) }
+      })
+      .filter((r) => {
+        if (!term) return true
+        const l = r.lead
+        return [l ? displayName(l) : r.seq.lead_record_id, l?.practice, l?.email, l?.specialty]
+          .some((v) => (v ?? '').toLowerCase().includes(term))
+      })
+
+    return built.sort((a, b) => {
+      if (b.overdueDays !== a.overdueDays) return b.overdueDays - a.overdueDays
+      if (a.finished !== b.finished) return a.finished ? -1 : 1
+      const ad = a.next?.scheduled_date ?? '9999-12-31'
+      const bd = b.next?.scheduled_date ?? '9999-12-31'
+      return ad.localeCompare(bd)
+    })
+  }, [sequences, filter, q, leadMap, stepsBySeq])
 
   const dueCount = useMemo(() =>
     steps.filter((s) => {
@@ -62,6 +99,12 @@ export default function FollowUps() {
     [sequences],
   )
 
+  const toggleOpen = (id: string) => setOpen((prev) => {
+    const n = new Set(prev)
+    n.has(id) ? n.delete(id) : n.add(id)
+    return n
+  })
+
   const handleMarkDone = async () => {
     if (!markingDone) return
     setBusyStep(markingDone.stepId)
@@ -70,9 +113,7 @@ export default function FollowUps() {
     } catch (e) {
       alert('Could not mark step done: ' + (e instanceof Error ? e.message : String(e)))
     } finally {
-      setBusyStep(null)
-      setMarkingDone(null)
-      setDoneNotes('')
+      setBusyStep(null); setMarkingDone(null); setDoneNotes('')
     }
   }
 
@@ -116,14 +157,17 @@ export default function FollowUps() {
 
   return (
     <>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 16, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 14, flexWrap: 'wrap' }}>
         <h1 style={{ margin: 0, fontSize: 20, fontWeight: 700 }}>Follow-Ups</h1>
         {dueCount > 0 && (
           <span style={{ background: 'var(--warn)', color: '#fff', borderRadius: 20, padding: '3px 11px', fontSize: 12, fontWeight: 700 }}>
             {dueCount} overdue / due today
           </span>
         )}
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+        <span className="small muted">{rows.length} lead{rows.length === 1 ? '' : 's'}</span>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
+          <input type="text" placeholder="Search name, practice, email…" value={q}
+                 onChange={(e) => setQ(e.target.value)} style={{ width: 220, fontSize: 12.5 }} />
           <button className={'btn' + (filter === 'active' ? '' : ' ghost')} onClick={() => setFilter('active')}>Active</button>
           <button className={'btn' + (filter === 'all' ? '' : ' ghost')} onClick={() => setFilter('all')}>All</button>
         </div>
@@ -132,13 +176,12 @@ export default function FollowUps() {
       {followUpError && (
         <div className="note err" style={{ marginBottom: 16 }}>
           <b>Follow-up tables unavailable.</b> Your leads are unaffected, but sequences cannot load or be created until the
-          migration is applied. Run <code>app/supabase/migrations/001_follow_ups.sql</code> in the Supabase SQL Editor.
+          migration is applied. Run <code>app/supabase/migrations/003_auto_reminders.sql</code> in the Supabase SQL Editor.
           <div className="small" style={{ marginTop: 6, opacity: .85 }}>Details: {followUpError}</div>
         </div>
       )}
 
-      {/* Reminder-address summary */}
-      <div className="note" style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+      <div className="note" style={{ marginBottom: 14, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         {managerEmail.trim() ? (
           <>
             <span>
@@ -157,195 +200,230 @@ export default function FollowUps() {
         )}
       </div>
 
-      {seqRows.length === 0 && (
+      {rows.length === 0 ? (
         <div className="card" style={{ textAlign: 'center', padding: 40 }}>
-          <p className="muted">No {filter === 'active' ? 'active ' : ''}follow-up sequences.</p>
-          <p className="small muted">Sequences are created automatically for every lead that reaches <b>Negotiation</b> stage.</p>
+          <p className="muted">
+            {q.trim() ? 'No leads match that search.' : `No ${filter === 'active' ? 'active ' : ''}follow-up sequences.`}
+          </p>
+          {!q.trim() && <p className="small muted">Sequences are created automatically for every lead that reaches <b>Negotiation</b> stage.</p>}
+        </div>
+      ) : (
+        <div className="card" style={{ padding: 0 }}>
+          <div className="tablewrap" style={{ maxHeight: 'none' }}>
+            <table>
+              <thead>
+                <tr>
+                  <th style={{ width: 30 }}></th>
+                  <th>Lead</th>
+                  <th style={{ width: 96 }}>Stage</th>
+                  <th style={{ width: 150 }}>Progress</th>
+                  <th style={{ width: 150 }}>Next due</th>
+                  <th style={{ width: 230 }}>Reminder email</th>
+                  <th style={{ width: 130 }}>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => {
+                  const { seq, lead, steps: sSteps, next, overdueDays, finished } = r
+                  const name = lead ? displayName(lead) : seq.lead_record_id
+                  const practice = lead?.practice ?? null
+                  const effEmail = effectiveEmail(seq, managerEmail)
+                  const isOverride = (seq.manager_email ?? '').trim() !== ''
+                  const isOpen = open.has(seq.id)
+                  const dueToday = next ? isDueToday(next) : false
+
+                  return (
+                    <Fragment key={seq.id}>
+                      <tr className={overdueDays > 0 ? 'fup-row-overdue' : dueToday ? 'fup-row-today' : undefined}>
+                        <td>
+                          <button className="expander" title={isOpen ? 'Collapse' : 'Show all 5 follow-ups'}
+                                  onClick={() => toggleOpen(seq.id)}>
+                            {isOpen ? '▾' : '▸'}
+                          </button>
+                        </td>
+                        <td>
+                          <div style={{ fontWeight: 700 }}>{name}</div>
+                          {practice && <div className="small muted">{practice}</div>}
+                          {lead?.email && <div className="small muted">{lead.email}</div>}
+                        </td>
+                        <td>{lead && <span className={'chip stage-' + lead.stage}>{lead.stage}</span>}</td>
+                        <td>
+                          {/* One pill per week: green done, red overdue, amber due today. */}
+                          <div style={{ display: 'flex', gap: 3, marginBottom: 4 }}>
+                            {sSteps.map((s) => {
+                              const done = stepComplete(s)
+                              const od = isOverdue(s)
+                              const dt = isDueToday(s)
+                              const partial = !done && s.channels.some((c) => isChannelDone(s, c))
+                              return (
+                                <span key={s.id} className="fup-week-pill"
+                                      title={`Week ${s.step_number} · ${s.scheduled_date}\n${done ? 'Done' : 'Left: ' + pendingChannels(s).join(', ')}`}
+                                      style={{
+                                        background: done ? 'var(--green)' : od ? 'var(--warn)' : dt ? '#e8b400' : partial ? 'var(--brand)' : 'var(--line)',
+                                        opacity: partial && !od && !dt ? .55 : 1,
+                                      }} />
+                              )
+                            })}
+                          </div>
+                          <span className="small muted">{r.doneChannels}/{r.totalChannels} channels</span>
+                        </td>
+                        <td>
+                          {finished ? (
+                            <span className="small" style={{ fontWeight: 700, color: '#856404' }}>All 5 complete</span>
+                          ) : next ? (
+                            <>
+                              <div className="small" style={{ fontWeight: 600 }}>Week {next.step_number} · {next.scheduled_date}</div>
+                              {overdueDays > 0
+                                ? <span className="chip" style={{ background: '#fbe2e4', color: '#a01b2c' }}>{overdueDays}d overdue</span>
+                                : dueToday
+                                  ? <span className="chip" style={{ background: '#fff3cd', color: '#856404' }}>Due today</span>
+                                  : <span className="small muted">upcoming</span>}
+                            </>
+                          ) : <span className="small muted">—</span>}
+                        </td>
+                        <td>
+                          {editingEmail === seq.id ? (
+                            <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                              <input type="email" value={editEmailVal} placeholder={managerEmail || 'manager@example.com'}
+                                     onChange={(e) => setEditEmailVal(e.target.value)}
+                                     onKeyDown={(e) => { if (e.key === 'Enter') saveEmail(seq.id); if (e.key === 'Escape') setEditingEmail(null) }}
+                                     style={{ width: '100%', fontSize: 12 }} autoFocus />
+                              <button className="btn" style={{ padding: '3px 10px', fontSize: 11.5 }}
+                                      onClick={() => saveEmail(seq.id)} disabled={busySeq === seq.id}>Save</button>
+                              <button className="btn ghost" style={{ padding: '3px 9px', fontSize: 11.5 }}
+                                      onClick={() => setEditingEmail(null)}>Cancel</button>
+                              <span className="small muted" style={{ flexBasis: '100%' }}>Blank = use Admin default</span>
+                            </div>
+                          ) : (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                              <span className="small" style={{ fontWeight: 600, wordBreak: 'break-all' }}>
+                                {effEmail || <span className="muted">not set</span>}
+                              </span>
+                              {isOverride
+                                ? <span className="chip" style={{ background: 'var(--brand-soft)', color: 'var(--brand-dark)' }}>custom</span>
+                                : <span className="chip">default</span>}
+                              {seq.status === 'active' && (
+                                <button className="btn ghost" style={{ padding: '2px 8px', fontSize: 11 }}
+                                        onClick={() => { setEditingEmail(seq.id); setEditEmailVal(seq.manager_email ?? '') }}>
+                                  Edit
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </td>
+                        <td>
+                          <span className={'chip fup-status-' + seq.status}>
+                            {seq.status === 'active' ? (finished ? '⏳ Awaiting' : '🔄 Active') : seq.status === 'won' ? '✅ Won' : '❌ Lost'}
+                          </span>
+                          {finished && seq.status === 'active' && (
+                            <button className="btn" style={{ padding: '3px 9px', fontSize: 11, marginTop: 5 }}
+                                    onClick={() => setResolving(r)} disabled={busySeq === seq.id}>
+                              Resolve
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+
+                      {/* Expanded: the 5 weeks, one row each */}
+                      {isOpen && sSteps.map((step) => {
+                        const complete = stepComplete(step)
+                        const od = isOverdue(step)
+                        const dt = isDueToday(step)
+                        const pending = pendingChannels(step)
+                        const editable = !complete && seq.status === 'active'
+                        const isNext = next?.id === step.id
+
+                        return (
+                          <tr key={step.id} className="fup-steprow">
+                            <td></td>
+                            <td style={{ fontWeight: 700, fontSize: 12, color: 'var(--brand-dark)' }}>
+                              Week {step.step_number}
+                              {isNext && !complete && <div className="small muted" style={{ fontWeight: 400 }}>next up</div>}
+                            </td>
+                            <td colSpan={2}>
+                              {editable ? (
+                                <input type="date" defaultValue={step.scheduled_date} disabled={busyStep === step.id}
+                                       onBlur={(e) => { if (e.target.value && e.target.value !== step.scheduled_date) handleReschedule(step.id, e.target.value) }}
+                                       style={{ fontSize: 12.5 }} />
+                              ) : (
+                                <span className="small" style={{ fontWeight: 600 }}>{step.scheduled_date}</span>
+                              )}
+                            </td>
+                            <td colSpan={2}>
+                              {/* Each channel ticks off on its own; the week is finished
+                                  only when all of them are, which is what reminders check. */}
+                              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                                {step.channels.map((ch) => {
+                                  const chDone = isChannelDone(step, ch)
+                                  return (
+                                    <button key={ch} className={'fup-channel-toggle' + (chDone ? ' done' : '')}
+                                            disabled={seq.status !== 'active'}
+                                            title={seq.status !== 'active' ? ch : chDone ? `${ch} done — click to undo` : `Mark ${ch} as done`}
+                                            onClick={() => toggleChannel(step.id, ch)}>
+                                      <span>{chDone ? '✓' : CHANNEL_ICON[ch]}</span> {ch}
+                                    </button>
+                                  )
+                                })}
+                              </div>
+                              {step.notes && <div className="small muted" style={{ marginTop: 4 }}>Note: {step.notes}</div>}
+                            </td>
+                            <td>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start' }}>
+                                {complete && <span className="chip" style={{ background: 'var(--green-soft)', color: 'var(--green-ink)' }}>✓ Done</span>}
+                                {od && <span className="chip" style={{ background: '#fbe2e4', color: '#a01b2c' }}>Overdue</span>}
+                                {dt && <span className="chip" style={{ background: '#fff3cd', color: '#856404' }}>Due today</span>}
+                                {!complete && pending.length < step.channels.length && (
+                                  <span className="small muted">{pending.length} left</span>
+                                )}
+                                {editable && (
+                                  <button className="btn" style={{ padding: '3px 9px', fontSize: 11 }}
+                                          disabled={busyStep === step.id}
+                                          onClick={() => { setMarkingDone({ stepId: step.id, seqId: seq.id }); setDoneNotes('') }}>
+                                    All done
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </Fragment>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-        {seqRows.map(({ seq, lead, steps: sSteps }) => {
-          const name = lead ? displayName(lead) : seq.lead_record_id
-          const practice = lead?.practice ?? null
-          const isDone = allDone(sSteps)
-          const next = nextPending(sSteps)
-          const effEmail = effectiveEmail(seq, managerEmail)
-          const isOverride = (seq.manager_email ?? '').trim() !== ''
+      <p className="small muted" style={{ marginTop: 8 }}>
+        Click <b>▸</b> to open a lead's 5 follow-ups. A week is finished only once every one of its channels is ticked —
+        reminders keep naming whatever is left.
+      </p>
 
-          return (
-            <div key={seq.id} className="card" style={{ padding: 0 }}>
-              {/* Card header */}
-              <div style={{ padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', borderBottom: '1px solid var(--line)' }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <span style={{ fontWeight: 700, fontSize: 15 }}>{name}</span>
-                  {practice && <span className="small muted" style={{ marginLeft: 8 }}>{practice}</span>}
-                  {lead && <span className={'chip stage-' + lead.stage} style={{ marginLeft: 8 }}>{lead.stage}</span>}
-                </div>
-                <span className={'chip fup-status-' + seq.status} style={{ marginLeft: 'auto' }}>
-                  {seq.status === 'active' ? (isDone ? '⏳ Awaiting resolution' : '🔄 Active') : seq.status === 'won' ? '✅ Won' : '❌ Lost'}
-                </span>
-              </div>
-
-              {/* Manager email — inherits the Admin default unless overridden for this lead */}
-              <div style={{ padding: '10px 18px', display: 'flex', alignItems: 'center', gap: 8, borderBottom: '1px solid var(--line)', background: 'var(--bg)', flexWrap: 'wrap' }}>
-                <span className="small muted" style={{ minWidth: 120 }}>Reminder email:</span>
-                {editingEmail === seq.id ? (
-                  <>
-                    <input
-                      type="email"
-                      value={editEmailVal}
-                      placeholder={managerEmail || 'manager@example.com'}
-                      onChange={(e) => setEditEmailVal(e.target.value)}
-                      style={{ flex: 1, maxWidth: 280 }}
-                      onKeyDown={(e) => { if (e.key === 'Enter') saveEmail(seq.id); if (e.key === 'Escape') setEditingEmail(null) }}
-                      autoFocus
-                    />
-                    <button className="btn" style={{ padding: '5px 12px' }} onClick={() => saveEmail(seq.id)} disabled={busySeq === seq.id}>Save</button>
-                    <button className="btn ghost" style={{ padding: '5px 10px' }} onClick={() => setEditingEmail(null)}>Cancel</button>
-                    <span className="small muted">Leave blank to use the Admin default.</span>
-                  </>
-                ) : (
-                  <>
-                    <span style={{ fontWeight: 600, fontSize: 13 }}>{effEmail || <span className="muted">not set</span>}</span>
-                    {isOverride
-                      ? <span className="chip" style={{ background: 'var(--brand-soft)', color: 'var(--brand-dark)' }}>custom</span>
-                      : <span className="chip">default</span>}
-                    {seq.status === 'active' && (
-                      <>
-                        <button className="btn ghost" style={{ padding: '3px 10px', fontSize: 12 }}
-                          onClick={() => { setEditingEmail(seq.id); setEditEmailVal(seq.manager_email ?? '') }}>
-                          Edit
-                        </button>
-                      </>
-                    )}
-                  </>
-                )}
-              </div>
-
-              {/* Steps */}
-              <div style={{ padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {sSteps.map((step) => {
-                  const overdue = isOverdue(step)
-                  const dueToday = isDueToday(step)
-                  const isNext = next?.id === step.id
-                  const complete = stepComplete(step)
-                  const pending = pendingChannels(step)
-                  const editable = !complete && seq.status === 'active'
-                  const stepBg = complete ? 'var(--green-soft)' : overdue ? '#fbe8ea' : dueToday ? '#fff9e6' : isNext ? 'var(--brand-soft)' : '#f9f8fc'
-
-                  return (
-                    <div key={step.id} style={{ background: stepBg, borderRadius: 10, padding: '10px 14px', border: '1px solid ' + (overdue ? '#f3b6bd' : dueToday ? '#f5d978' : isNext ? 'var(--brand-soft2)' : 'var(--line)') }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                        <div style={{ minWidth: 54, fontWeight: 700, fontSize: 12, color: 'var(--brand-dark)' }}>Week {step.step_number}</div>
-
-                        {editable ? (
-                          <input
-                            type="date"
-                            defaultValue={step.scheduled_date}
-                            disabled={busyStep === step.id}
-                            onBlur={(e) => { if (e.target.value && e.target.value !== step.scheduled_date) handleReschedule(step.id, e.target.value) }}
-                            style={{ fontSize: 13 }}
-                          />
-                        ) : (
-                          <span style={{ fontSize: 13, fontWeight: 600 }}>{step.scheduled_date}</span>
-                        )}
-
-                        {/* Each channel ticks off on its own — the week is finished only
-                            when all of them are, and reminders name whatever is left. */}
-                        <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-                          {step.channels.map((ch) => {
-                            const chDone = isChannelDone(step, ch)
-                            return (
-                              <button
-                                key={ch}
-                                className={'fup-channel-toggle' + (chDone ? ' done' : '')}
-                                disabled={seq.status !== 'active'}
-                                title={seq.status !== 'active' ? ch : chDone ? `${ch} done — click to undo` : `Mark ${ch} as done`}
-                                onClick={() => toggleChannel(step.id, ch)}
-                              >
-                                <span>{chDone ? '✓' : CHANNEL_ICON[ch]}</span> {ch}
-                              </button>
-                            )
-                          })}
-                        </div>
-
-                        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
-                          {complete && <span className="chip" style={{ background: 'var(--green-soft)', color: 'var(--green-ink)' }}>✓ Done</span>}
-                          {overdue && <span className="chip" style={{ background: '#fbe2e4', color: '#a01b2c' }}>Overdue</span>}
-                          {dueToday && <span className="chip" style={{ background: '#fff3cd', color: '#856404' }}>Due today</span>}
-                          {!complete && pending.length < step.channels.length && (
-                            <span className="small muted">{pending.length} left</span>
-                          )}
-                          {editable && (
-                            <button
-                              className="btn"
-                              style={{ padding: '4px 10px', fontSize: 12 }}
-                              disabled={busyStep === step.id}
-                              onClick={() => { setMarkingDone({ stepId: step.id, seqId: seq.id }); setDoneNotes('') }}
-                            >
-                              All done
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                      {step.notes && <div className="small muted" style={{ marginTop: 6, paddingLeft: 64 }}>Note: {step.notes}</div>}
-                    </div>
-                  )
-                })}
-              </div>
-
-              {/* Resolution panel — appears after all 5 steps are done */}
-              {isDone && seq.status === 'active' && (
-                <div style={{ margin: '0 18px 18px', background: '#fff9e6', border: '1px solid #f5d978', borderRadius: 10, padding: '14px 16px' }}>
-                  <div style={{ fontWeight: 700, marginBottom: 6 }}>All 5 follow-ups completed</div>
-                  <p className="small" style={{ margin: '0 0 12px', color: 'var(--ink)' }}>
-                    Did <b>{name}</b> respond to your outreach?
-                  </p>
-                  <div style={{ display: 'flex', gap: 10 }}>
-                    <button className="btn" style={{ background: 'var(--green-ink)' }} disabled={busySeq === seq.id}
-                      onClick={() => setResolving({ seq, lead, steps: sSteps })}>
-                      ✅ Yes, got response
-                    </button>
-                    <button className="btn warn" disabled={busySeq === seq.id}
-                      onClick={() => setResolving({ seq, lead, steps: sSteps })}>
-                      ❌ No response — mark Lost
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          )
-        })}
-      </div>
-
-      {/* Mark Done modal */}
+      {/* Mark-all-done modal */}
       {markingDone && (
         <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && setMarkingDone(null)}>
           <div className="modal" style={{ width: 420 }}>
-            <h3 style={{ margin: '0 0 12px', fontSize: 15 }}>Mark follow-up as done</h3>
+            <h3 style={{ margin: '0 0 12px', fontSize: 15 }}>Mark every channel for this week as done</h3>
             <label style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: 12, color: 'var(--muted)', fontWeight: 600 }}>
               NOTES (optional)
-              <textarea
-                rows={3}
-                placeholder="e.g. Left voicemail, sent follow-up email…"
-                value={doneNotes}
-                onChange={(e) => setDoneNotes(e.target.value)}
-                style={{ font: 'inherit', padding: '8px 10px', border: '1px solid var(--line)', borderRadius: 8, resize: 'vertical' }}
-                autoFocus
-              />
+              <textarea rows={3} placeholder="e.g. Left voicemail, sent follow-up email…" value={doneNotes}
+                        onChange={(e) => setDoneNotes(e.target.value)}
+                        style={{ font: 'inherit', padding: '8px 10px', border: '1px solid var(--line)', borderRadius: 8, resize: 'vertical' }}
+                        autoFocus />
             </label>
             <div className="modal-actions">
               <button className="btn ghost" onClick={() => setMarkingDone(null)} disabled={busyStep === markingDone.stepId}>Cancel</button>
               <button className="btn" onClick={handleMarkDone} disabled={busyStep === markingDone.stepId}>
-                {busyStep === markingDone.stepId ? 'Saving…' : 'Confirm Done'}
+                {busyStep === markingDone.stepId ? 'Saving…' : 'Confirm'}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Resolution confirmation modal */}
+      {/* Resolution modal */}
       {resolving && (
         <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && setResolving(null)}>
           <div className="modal" style={{ width: 460 }}>
@@ -354,32 +432,22 @@ export default function FollowUps() {
               Lead: <b>{resolving.lead ? displayName(resolving.lead) : resolving.seq.lead_record_id}</b>
             </p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              <button
-                className="btn"
-                style={{ background: 'var(--green-ink)', justifyContent: 'center' }}
-                disabled={busySeq === resolving.seq.id}
-                onClick={() => handleResolve('won')}
-              >
+              <button className="btn" style={{ background: 'var(--green-ink)' }} disabled={busySeq === resolving.seq.id}
+                      onClick={() => handleResolve('won')}>
                 ✅ Got Response — mark sequence as Won
               </button>
-              <button
-                className="btn warn"
-                disabled={busySeq === resolving.seq.id}
-                onClick={() => handleResolve('lost')}
-              >
+              <button className="btn warn" disabled={busySeq === resolving.seq.id} onClick={() => handleResolve('lost')}>
                 ❌ No Response — mark lead as Lost
               </button>
-              <button className="btn ghost" onClick={() => setResolving(null)} disabled={busySeq === resolving.seq.id}>
-                Cancel
-              </button>
+              <button className="btn ghost" onClick={() => setResolving(null)} disabled={busySeq === resolving.seq.id}>Cancel</button>
             </div>
             <p className="small muted" style={{ marginTop: 12 }}>
-              Marking as Lost will update the lead's stage in this tool. Remember to also update Zoho CRM to keep records in sync.
+              Marking as Lost updates the lead's stage here. Remember to update Zoho CRM too. Left alone, the server marks
+              it Lost automatically {automation.graceDays} days after the 5th follow-up.
             </p>
           </div>
         </div>
       )}
-
     </>
   )
 }

@@ -2,9 +2,13 @@
 -- Migration 004 — Daily schedule for the reminder job
 -- Run AFTER deploying the follow-up-reminders Edge Function.
 --
--- Fill in the three placeholders below before running:
+-- Fill in the four placeholders below before running:
 --   <PROJECT_REF>  your Supabase project ref (Settings -> General)
---   <CRON_SECRET>  the same value set as the CRON_SECRET function secret
+--   <CRON_SECRET>  the same value set as the CRON_SECRET function secret.
+--                  Use letters and numbers only — punctuation breaks URLs.
+--   <ANON_KEY>     your anon / publishable key (Settings -> API). Needed only
+--                  so the gateway accepts the call; it is public and grants
+--                  nothing by itself.
 --   <UTC_HOUR>     digest hour converted to UTC (see note)
 --
 -- Timezone note: pg_cron schedules in UTC. Pakistan is UTC+5 year-round with no
@@ -27,6 +31,12 @@ select cron.schedule(
     url     := 'https://<PROJECT_REF>.supabase.co/functions/v1/follow-up-reminders',
     headers := jsonb_build_object(
                  'Content-Type', 'application/json',
+                 -- Satisfies the API gateway when the function has JWT
+                 -- verification enabled. The anon key is public (it ships in the
+                 -- browser bundle), so this grants nothing on its own — the
+                 -- x-cron-secret below is what actually authorizes the call.
+                 -- Leave as-is if you turned JWT verification off.
+                 'Authorization', 'Bearer <ANON_KEY>',
                  'x-cron-secret', '<CRON_SECRET>'
                ),
     body    := '{}'::jsonb,

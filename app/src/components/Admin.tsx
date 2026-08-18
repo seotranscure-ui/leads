@@ -71,6 +71,8 @@ export default function Admin() {
     parts.push(r.dryRun
       ? (n ? `Would send ${n} digest email${n > 1 ? 's' : ''}: ${r.digestsSent!.join(', ')}` : 'Nothing is due — no digest would be sent')
       : (n ? `Sent ${n} digest email${n > 1 ? 's' : ''} to: ${r.digestsSent!.join(', ')}` : 'Nothing was due, so no digest was sent'))
+    const dup = r.alreadySentToday?.length ?? 0
+    if (dup) parts.push(`${dup} recipient${dup > 1 ? 's' : ''} already had today's digest, so it was not sent again`)
     if (r.prompted) parts.push(`${r.prompted} decision prompt${r.prompted > 1 ? 's' : ''}`)
     if (r.autoLost) parts.push(`${r.autoLost} lead${r.autoLost > 1 ? 's' : ''} auto-marked Lost`)
     if (r.failed?.length) return { kind: 'err', text: parts.join(' · ') + `\n\nFailures: ` + r.failed.map((f) => `${f.to}: ${f.error}`).join('; ') }

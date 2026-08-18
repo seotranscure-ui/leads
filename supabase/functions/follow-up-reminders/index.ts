@@ -411,21 +411,36 @@ Deno.serve(async (req: Request) => {
     const sent: string[] = []
     const failed: { to: string; error: string }[] = []
 
+    const skipped: string[] = []
+
     for (const [to, items] of byRecipient) {
       const { html, text, subject } = digestBody(items, today)
       if (dryRun) { sent.push(`${to} (dry, ${items.length} items)`); continue }
+
+      // Claim today's slot BEFORE sending. The unique index on
+      // (sent_on, recipient, kind) where status='sent' means a second run on the
+      // same day loses the race here and skips the send entirely — so a retried
+      // cron or a manual "Run digest now" cannot deliver a duplicate. Sending
+      // first would only have de-duplicated the log row, not the email.
+      const { data: claim, error: claimErr } = await db.from('follow_up_reminders')
+        .insert({ sent_on: today, recipient: to, kind: 'digest', subject, step_count: items.length, status: 'sent' })
+        .select('id').single()
+
+      if (claimErr) {
+        if (/duplicate|unique/i.test(String(claimErr.message))) { skipped.push(to); continue }
+        failed.push({ to, error: claimErr.message })
+        continue
+      }
+
+      const rowId = (claim as { id: string }).id
       try {
         await sendMail(to, subject, html, text)
-        // Unique index makes a second run the same day a no-op rather than a duplicate.
-        const { error } = await db.from('follow_up_reminders')
-          .insert({ sent_on: today, recipient: to, kind: 'digest', subject, step_count: items.length, status: 'sent' })
-        if (error && !String(error.message).includes('duplicate')) throw error
         sent.push(to)
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e)
         failed.push({ to, error: msg })
-        await db.from('follow_up_reminders')
-          .insert({ sent_on: today, recipient: to, kind: 'digest', subject, step_count: items.length, status: 'failed', error: msg })
+        // Flip the claim to failed so it no longer blocks a later retry.
+        await db.from('follow_up_reminders').update({ status: 'failed', error: msg }).eq('id', rowId)
       }
     }
 
@@ -448,15 +463,25 @@ Deno.serve(async (req: Request) => {
       if (!lead || !to) continue
       if (dryRun) { prompted++; continue }
 
+      // Claim the prompt before sending, conditional on it still being unclaimed.
+      // If a concurrent run got there first this affects no rows and we skip,
+      // rather than both runs emailing the same decision request.
+      const { data: claimed } = await db.from('follow_up_sequences')
+        .update({ prompt_sent_at: new Date().toISOString() })
+        .eq('id', seq.id).is('prompt_sent_at', null)
+        .select('id')
+      if (!claimed?.length) continue
+
       const { html, text, subject } = promptBody(lead, cfg.graceDays)
       try {
         await sendMail(to, subject, html, text)
-        await db.from('follow_up_sequences').update({ prompt_sent_at: new Date().toISOString() }).eq('id', seq.id)
         await db.from('follow_up_reminders').insert({ sent_on: today, recipient: to, kind: 'resolution_prompt', subject, step_count: 5, status: 'sent' })
         prompted++
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e)
         failed.push({ to, error: msg })
+        // Release the claim so the next run retries instead of silently never prompting.
+        await db.from('follow_up_sequences').update({ prompt_sent_at: null }).eq('id', seq.id)
         await db.from('follow_up_reminders').insert({ sent_on: today, recipient: to, kind: 'resolution_prompt', subject, step_count: 5, status: 'failed', error: msg })
       }
     }
@@ -473,9 +498,15 @@ Deno.serve(async (req: Request) => {
       if (!lead) continue
       if (dryRun) { autoLost++; continue }
 
-      await db.from('follow_up_sequences')
+      // Conditional on the sequence still being active, and check it actually
+      // took effect — otherwise a concurrent run would double-count and send a
+      // second "marked Lost" notice for the same lead.
+      const { data: lostRows } = await db.from('follow_up_sequences')
         .update({ status: 'lost', resolved_at: new Date().toISOString(), resolved_auto: true })
         .eq('id', seq.id).eq('status', 'active')
+        .select('id')
+      if (!lostRows?.length) continue
+
       await db.from('leads').update({ status: 'Lost Lead', stage: 'Lost' }).eq('record_id', seq.lead_record_id)
       autoLost++
 
@@ -495,7 +526,7 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    return Response.json({ ok: true, today, dryRun, digestsSent: sent, prompted, autoLost, failed }, { headers: CORS })
+    return Response.json({ ok: true, today, dryRun, digestsSent: sent, alreadySentToday: skipped, prompted, autoLost, failed }, { headers: CORS })
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     console.error('follow-up-reminders failed:', msg)

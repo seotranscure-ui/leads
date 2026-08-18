@@ -140,25 +140,46 @@ interface DueItem { lead: Lead; step: Step; pending: string[]; overdueDays: numb
 async function probeTcp(hostname: string, port: number, ms = 8000): Promise<string> {
   const t0 = Date.now()
   let timer: number | undefined
+  let conn: Deno.Conn | null = null
   try {
-    const conn = await Promise.race([
+    conn = await Promise.race([
       Deno.connect({ hostname, port }),
       new Promise<never>((_, reject) => {
         timer = setTimeout(() => reject(new Error(`no response within ${ms}ms — port looks blocked or filtered`)), ms)
       }),
+    ]) as Deno.Conn
+    if (timer !== undefined) { clearTimeout(timer); timer = undefined }
+    const connectedMs = Date.now() - t0
+
+    // On 465 the server expects TLS immediately, so a plaintext read would hang —
+    // the successful connect is all we can learn without doing a TLS handshake.
+    if (port === 465) return `reachable (connected in ${connectedMs}ms, implicit TLS — greeting not read)`
+
+    // On a plaintext port the server should greet with "220 ..." unprompted.
+    // Whether that arrives tells us if it is speaking SMTP at all.
+    const buf = new Uint8Array(512)
+    const read = await Promise.race([
+      conn.read(buf),
+      new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), 6000) }),
     ])
-    ;(conn as Deno.Conn).close()
-    return `reachable (connected in ${Date.now() - t0}ms)`
+    if (read === null) {
+      return `connected in ${connectedMs}ms but NO SMTP GREETING within 6s — the port accepts connections without answering`
+    }
+    const greeting = new TextDecoder().decode(buf.subarray(0, read as number)).trim().split('\n')[0]
+    return `reachable (${connectedMs}ms) — greeting: ${greeting.slice(0, 120)}`
   } catch (e) {
     return `UNREACHABLE after ${Date.now() - t0}ms — ${e instanceof Error ? e.message : String(e)}`
   } finally {
     if (timer !== undefined) clearTimeout(timer)
+    try { conn?.close() } catch { /* already closed */ }
   }
 }
 
-// Hard ceiling on a send. Without this a hanging SMTP connection runs until the
-// platform kills the whole invocation, and the caller gets no usable error.
-const SEND_TIMEOUT_MS = 20_000
+// Hard ceiling on a send. Kept well inside the platform's own wall-clock limit,
+// so a stalled SMTP conversation returns a readable error rather than having the
+// whole invocation killed — which reaches the browser only as an opaque
+// "failed to send a request".
+const SEND_TIMEOUT_MS = 12_000
 
 async function sendMail(to: string, subject: string, html: string, text: string): Promise<void> {
   const SMTPClient = await loadSMTPClient()
@@ -184,9 +205,12 @@ async function sendMail(to: string, subject: string, html: string, text: string)
       }),
       new Promise<never>((_, reject) => {
         timer = setTimeout(() => reject(new Error(
-          `SMTP send timed out after ${SEND_TIMEOUT_MS / 1000}s talking to ${env('SMTP_HOST')}:${port}. ` +
-          'The connection hung rather than being refused, which usually means the port is blocked between ' +
-          'Supabase and the mail server. Run Diagnose to see the TCP probe result.',
+          `SMTP send timed out after ${SEND_TIMEOUT_MS / 1000}s talking to ${env('SMTP_HOST')}:${port}` +
+          (port === 465 ? ' (implicit TLS)' : ' (STARTTLS)') + '. ' +
+          'The socket opened but the conversation stalled. ' +
+          (port !== 465
+            ? 'STARTTLS on this port is the usual culprit — try SMTP_PORT=465, which uses TLS from the first byte and skips the negotiation.'
+            : 'Since implicit TLS also stalls, check whether the server requires a client certificate or restricts which hosts may authenticate.'),
         )), SEND_TIMEOUT_MS)
       }),
     ])

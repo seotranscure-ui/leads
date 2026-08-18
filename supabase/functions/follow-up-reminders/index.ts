@@ -280,25 +280,28 @@ Deno.serve(async (req: Request) => {
   }
 
   // Two ways in:
-  //   1. the scheduled job, proving itself with the shared CRON_SECRET
+  //   1. the scheduled job, proving itself with the shared cron secret
   //   2. a signed-in team member using the Admin test button, proving itself
   //      with a real user JWT (the anon key alone is NOT enough — it is public)
   const givenSecret = req.headers.get('x-cron-secret') ?? url.searchParams.get('secret')
 
   // The shared secret lives in Supabase Vault, so the cron job and this function
-  // read the same single copy and there is nothing to keep in sync. An env var of
-  // the same name still wins if one is set.
-  let expectedSecret = CRON_SECRET
-  if (!expectedSecret && givenSecret && SERVICE_KEY) {
-    try {
-      const { data } = await createClient(SUPABASE_URL, SERVICE_KEY)
-        .schema('vault').from('decrypted_secrets')
-        .select('decrypted_secret').eq('name', 'cron_secret').maybeSingle()
-      const v = (data as { decrypted_secret?: string } | null)?.decrypted_secret
-      if (v) expectedSecret = v
-    } catch { /* vault unavailable — fall through to the user-JWT path */ }
+  // use one copy and there is nothing to keep in sync. The vault schema is not
+  // exposed through PostgREST, so the comparison happens inside the database via
+  // verify_cron_secret() — the secret never leaves Postgres. An env var of the
+  // same name short-circuits this if one is set.
+  let isCron = false
+  if (givenSecret) {
+    if (CRON_SECRET) {
+      isCron = givenSecret === CRON_SECRET
+    } else if (SERVICE_KEY) {
+      try {
+        const { data } = await createClient(SUPABASE_URL, SERVICE_KEY)
+          .rpc('verify_cron_secret', { candidate: givenSecret })
+        isCron = data === true
+      } catch { /* fall through to the user-JWT path */ }
+    }
   }
-  const isCron = !!expectedSecret && givenSecret === expectedSecret
 
   let isUser = false
   if (!isCron && SERVICE_KEY) {

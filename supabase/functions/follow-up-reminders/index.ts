@@ -133,6 +133,33 @@ interface DueItem { lead: Lead; step: Step; pending: string[]; overdueDays: numb
 
 // ── mail ─────────────────────────────────────────────────────────────────────
 
+// Can we even open a TCP socket to the mail server? Distinguishes a blocked or
+// filtered port (hangs, then times out) from a refused one (fails immediately)
+// from a reachable one. A hang is what makes the function get killed mid-request,
+// which the browser can only report as an opaque fetch failure.
+async function probeTcp(hostname: string, port: number, ms = 8000): Promise<string> {
+  const t0 = Date.now()
+  let timer: number | undefined
+  try {
+    const conn = await Promise.race([
+      Deno.connect({ hostname, port }),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`no response within ${ms}ms — port looks blocked or filtered`)), ms)
+      }),
+    ])
+    ;(conn as Deno.Conn).close()
+    return `reachable (connected in ${Date.now() - t0}ms)`
+  } catch (e) {
+    return `UNREACHABLE after ${Date.now() - t0}ms — ${e instanceof Error ? e.message : String(e)}`
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
+}
+
+// Hard ceiling on a send. Without this a hanging SMTP connection runs until the
+// platform kills the whole invocation, and the caller gets no usable error.
+const SEND_TIMEOUT_MS = 20_000
+
 async function sendMail(to: string, subject: string, html: string, text: string): Promise<void> {
   const SMTPClient = await loadSMTPClient()
   const port = Number(env('SMTP_PORT', '587'))
@@ -145,16 +172,27 @@ async function sendMail(to: string, subject: string, html: string, text: string)
       auth: { username: env('SMTP_USER'), password: env('SMTP_PASS') },
     },
   })
+  let timer: number | undefined
   try {
-    await client.send({
-      from: env('SMTP_FROM') || env('SMTP_USER'),
-      to,
-      subject,
-      content: text,
-      html,
-    })
+    await Promise.race([
+      client.send({
+        from: env('SMTP_FROM') || env('SMTP_USER'),
+        to,
+        subject,
+        content: text,
+        html,
+      }),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(
+          `SMTP send timed out after ${SEND_TIMEOUT_MS / 1000}s talking to ${env('SMTP_HOST')}:${port}. ` +
+          'The connection hung rather than being refused, which usually means the port is blocked between ' +
+          'Supabase and the mail server. Run Diagnose to see the TCP probe result.',
+        )), SEND_TIMEOUT_MS)
+      }),
+    ])
   } finally {
-    await client.close()
+    if (timer !== undefined) clearTimeout(timer)
+    try { await client.close() } catch { /* already dead */ }
   }
 }
 
@@ -362,11 +400,24 @@ Deno.serve(async (req: Request) => {
     let smtpLib = 'not tested'
     try { await loadSMTPClient(); smtpLib = 'loaded ok' }
     catch (e) { smtpLib = 'FAILED: ' + (e instanceof Error ? e.message : String(e)) }
+
+    // Probe the configured port, plus the other common SMTP port, so the answer
+    // includes whether switching ports would help.
+    const host = env('SMTP_HOST')
+    const configuredPort = Number(env('SMTP_PORT', '587'))
+    const alt = configuredPort === 465 ? 587 : 465
+    const tcp: Record<string, string> = {}
+    if (host) {
+      tcp[`${host}:${configuredPort} (configured)`] = await probeTcp(host, configuredPort)
+      tcp[`${host}:${alt}`] = await probeTcp(host, alt)
+    }
+
     return Response.json({
       ok: true,
       boot: 'ok',
       authedAs: isCron ? 'cron' : 'user',
       smtpLib,
+      tcp,
       secretsPresent: {
         SMTP_HOST: !!env('SMTP_HOST'),
         SMTP_PORT: env('SMTP_PORT') || '(default 587)',

@@ -318,6 +318,8 @@ export interface ReminderRunResult {
   boot?: string
   authedAs?: string
   smtpLib?: string
+  /** TCP reachability of the mail server, keyed by "host:port". */
+  tcp?: Record<string, string>
   secretsPresent?: Record<string, unknown>
 }
 

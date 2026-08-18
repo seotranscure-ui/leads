@@ -117,6 +117,18 @@ function daysBetween(fromIso: string, toIso: string): number {
 const esc = (s: string): string =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
+// Collapse the indentation whitespace left by the HTML template literals.
+// Long runs of spaces and newlines get quoted-printable encoded on the way out,
+// and a trailing space before a line break becomes a literal "=20" in clients
+// that do not decode it — which is what showed up in the body instead of content.
+// Word spacing is preserved; only the padding between tags and the indentation
+// after newlines is removed.
+const compactHtml = (s: string): string =>
+  s.replace(/\r?\n\s*/g, ' ')
+   .replace(/>\s+</g, '><')
+   .replace(/\s{2,}/g, ' ')
+   .trim()
+
 // Channels for a step that have not been ticked off yet.
 function pendingChannels(step: Step): string[] {
   const done = new Set(step.completed_channels ?? [])
@@ -233,6 +245,12 @@ function digestBody(items: DueItem[], today: string): { html: string; text: stri
     ? `Follow-ups: ${overdue.length} overdue, ${dueToday.length} due today`
     : `Follow-ups: ${dueToday.length} due today`
 
+  // With nothing due there is no lead content at all, which previously produced a
+  // near-empty body. Say so explicitly instead.
+  const emptyNote = items.length
+    ? ''
+    : '<p style="font-size:14px;background:#eef7df;border:1px solid #cfe8a6;color:#4a6b1a;padding:12px 14px;border-radius:9px;">Nothing is outstanding right now — no follow-up is due or overdue today.</p>'
+
   const section = (title: string, list: DueItem[], color: string): string => {
     if (!list.length) return ''
     const rows = list.map((i) => {
@@ -265,6 +283,7 @@ function digestBody(items: DueItem[], today: string): { html: string; text: stri
         <span style="font-size:19px;font-weight:700;color:#5c2050;">Follow-ups for ${today}</span>
       </div>
       <p style="font-size:13px;color:#6e6878;">Each lead below still has outreach outstanding for that week. A week stops appearing here once every one of its channels is ticked off in the tracker.</p>
+      ${emptyNote}
       ${section('Overdue', overdue, '#b91c1c')}
       ${section('Due today', dueToday, '#5c2050')}
       <p style="margin-top:24px;">
@@ -289,7 +308,7 @@ function digestBody(items: DueItem[], today: string): { html: string; text: stri
     `Open: ${APP_URL}/follow-ups`,
   ].filter(Boolean).join('\n')
 
-  return { html, text, subject }
+  return { html: compactHtml(html), text, subject }
 }
 
 function promptBody(lead: Lead, graceDays: number): { html: string; text: string; subject: string } {
@@ -314,7 +333,7 @@ function promptBody(lead: Lead, graceDays: number): { html: string; text: string
   const text = `All 5 follow-ups completed for ${name}${lead.practice ? ` (${lead.practice})` : ''}.\n\n` +
     `Did they respond? Record the outcome at ${APP_URL}/follow-ups\n\n` +
     `If nothing is recorded within ${graceDays} days, the lead will be marked Lost automatically.`
-  return { html, text, subject }
+  return { html: compactHtml(html), text, subject }
 }
 
 function autoLostBody(leads: Lead[]): { html: string; text: string; subject: string } {
@@ -338,7 +357,7 @@ function autoLostBody(leads: Lead[]): { html: string; text: string; subject: str
   const text = `Marked Lost automatically (grace period elapsed with no outcome recorded):\n\n` +
     leads.map((l) => `- ${nameOf(l)}${l.practice ? ` — ${l.practice}` : ''}`).join('\n') +
     `\n\nRemember to update Zoho CRM.\n${APP_URL}/follow-ups`
-  return { html, text, subject }
+  return { html: compactHtml(html), text, subject }
 }
 
 // ── main ─────────────────────────────────────────────────────────────────────
@@ -475,17 +494,39 @@ Deno.serve(async (req: Request) => {
     const { data: emailRow } = await db.from('app_settings').select('value').eq('key', 'follow_up_manager_email').maybeSingle()
     const defaultEmail = typeof emailRow?.value === 'string' ? emailRow.value.trim() : ''
 
-    // One-off deliverability check.
+    const today = todayIn(cfg.timezone)
+
+    // One-off deliverability check. Uses a representative sample rather than an
+    // empty digest, so the recipient can actually judge the formatting — an empty
+    // digest has no lead content in it at all.
     if (testTo) {
-      const { html, text, subject } = digestBody([], todayIn(cfg.timezone))
-      await sendMail(testTo, '[TEST] ' + subject, html, text)
-      await db.from('follow_up_reminders').insert({ sent_on: todayIn(cfg.timezone), recipient: testTo, kind: 'test', subject, step_count: 0, status: 'sent' })
+      const sampleLead: Lead = {
+        record_id: 'sample', lead_name: 'Sample Lead (test)', first_name: null, last_name: null,
+        practice: 'Sample Family Practice', email: 'lead@example.com', phone: '+1 555 0100',
+      }
+      const sampleItems: DueItem[] = [
+        {
+          lead: sampleLead,
+          step: { id: 's1', sequence_id: 'x', step_number: 2, scheduled_date: today, channels: ['Email', 'SMS', 'Call'], completed_channels: ['Email'], status: 'pending' },
+          pending: ['SMS', 'Call'],
+          overdueDays: 3,
+        },
+        {
+          lead: { ...sampleLead, lead_name: 'Another Sample Lead (test)', practice: 'Sample Cardiology' },
+          step: { id: 's2', sequence_id: 'y', step_number: 1, scheduled_date: today, channels: ['Email', 'SMS'], completed_channels: [], status: 'pending' },
+          pending: ['Email', 'SMS'],
+          overdueDays: 0,
+        },
+      ]
+      const { html, text, subject } = digestBody(sampleItems, today)
+      const testSubject = '[TEST] ' + subject
+      const banner = '<p style="font-size:13px;background:#f4ebf2;border:1px solid #ede2eb;color:#5c2050;padding:11px 14px;border-radius:9px;"><b>This is a test.</b> The two leads below are made up, to show the layout. Real reminders list your actual leads.</p>'
+      await sendMail(testTo, testSubject, html.replace('<p style="font-size:13px;color:#6e6878;">', banner + '<p style="font-size:13px;color:#6e6878;">'), 'THIS IS A TEST — the leads below are samples.\n\n' + text)
+      await db.from('follow_up_reminders').insert({ sent_on: today, recipient: testTo, kind: 'test', subject: testSubject, step_count: 0, status: 'sent' })
       return Response.json({ ok: true, tested: testTo }, { headers: CORS })
     }
 
     if (!cfg.enabled) return Response.json({ ok: true, skipped: 'automation disabled' }, { headers: CORS })
-
-    const today = todayIn(cfg.timezone)
 
     // Load everything active in three reads.
     const { data: seqs, error: se } = await db.from('follow_up_sequences').select('*').eq('status', 'active')

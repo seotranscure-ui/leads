@@ -1,7 +1,10 @@
 import { useEffect, useState, type ChangeEvent } from 'react'
 import { useAppData } from '../data/AppData'
 import { ruleLabel, type HighTicketRule } from '../lib/leads'
-import { fetchReminderLog, type ReminderLog } from '../lib/api'
+import {
+  fetchReminderLog, sendTestReminder, previewReminders, runRemindersNow,
+  type ReminderLog, type ReminderRunResult,
+} from '../lib/api'
 import Logo from './Logo'
 
 export default function Admin() {
@@ -33,6 +36,62 @@ export default function Admin() {
       setAutoMsg({ kind: 'ok', text: 'Reminder settings saved.' })
     } catch (e) {
       setAutoMsg({ kind: 'err', text: e instanceof Error ? e.message : String(e) })
+    }
+  }
+
+  // ── Test / preview / run-now against the reminder Edge Function ─────────────
+  const [testTo, setTestTo] = useState('')
+  const [running, setRunning] = useState<'test' | 'dry' | 'now' | null>(null)
+  const [runMsg, setRunMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
+  useEffect(() => { if (!testTo && managerEmail) setTestTo(managerEmail) }, [managerEmail])
+
+  // Turn the function's reply into something a non-developer can act on.
+  const describe = (r: ReminderRunResult): { kind: 'ok' | 'err'; text: string } => {
+    if (!r.ok) {
+      if (r.missingSecrets?.length) {
+        return { kind: 'err', text: `Not configured yet — these secrets are missing in Supabase: ${r.missingSecrets.join(', ')}. Add them under Project Settings → Edge Functions → Secrets, then redeploy the function.` }
+      }
+      const e = r.error ?? 'unknown error'
+      if (/auth|credential|password|535|534/i.test(e)) {
+        return { kind: 'err', text: `The mail server rejected the login. Check SMTP_USER and SMTP_PASS.\n\n${e}` }
+      }
+      if (/timeout|refused|dns|getaddrinfo|connect/i.test(e)) {
+        return { kind: 'err', text: `Could not reach the mail server. Check SMTP_HOST and SMTP_PORT (try 465 if 587 fails), and that it accepts connections from the internet.\n\n${e}` }
+      }
+      if (/unauthorized/i.test(e)) {
+        return { kind: 'err', text: `The function refused the call. Try signing out and back in.\n\n${e}` }
+      }
+      return { kind: 'err', text: e }
+    }
+    if (r.tested) return { kind: 'ok', text: `Test email sent to ${r.tested}. Check the inbox — and the spam folder if it is not there.` }
+    if (r.skipped) return { kind: 'ok', text: 'Automation is switched off, so nothing was sent. Tick "Send reminders automatically" above first.' }
+    if (r.note) return { kind: 'ok', text: 'Nothing to send — no active follow-up sequences.' }
+    const parts: string[] = []
+    const n = r.digestsSent?.length ?? 0
+    parts.push(r.dryRun
+      ? (n ? `Would send ${n} digest email${n > 1 ? 's' : ''}: ${r.digestsSent!.join(', ')}` : 'Nothing is due — no digest would be sent')
+      : (n ? `Sent ${n} digest email${n > 1 ? 's' : ''} to: ${r.digestsSent!.join(', ')}` : 'Nothing was due, so no digest was sent'))
+    if (r.prompted) parts.push(`${r.prompted} decision prompt${r.prompted > 1 ? 's' : ''}`)
+    if (r.autoLost) parts.push(`${r.autoLost} lead${r.autoLost > 1 ? 's' : ''} auto-marked Lost`)
+    if (r.failed?.length) return { kind: 'err', text: parts.join(' · ') + `\n\nFailures: ` + r.failed.map((f) => `${f.to}: ${f.error}`).join('; ') }
+    return { kind: 'ok', text: parts.join(' · ') }
+  }
+
+  const doRun = async (kind: 'test' | 'dry' | 'now') => {
+    if (kind === 'test' && !testTo.trim()) {
+      setRunMsg({ kind: 'err', text: 'Enter an address to send the test to.' }); return
+    }
+    setRunning(kind); setRunMsg(null)
+    try {
+      const r = kind === 'test' ? await sendTestReminder(testTo.trim())
+              : kind === 'dry' ? await previewReminders()
+              : await runRemindersNow()
+      setRunMsg(describe(r))
+      if (kind === 'now' || kind === 'test') fetchReminderLog(20).then(setLog).catch(() => {})
+    } catch (e) {
+      setRunMsg({ kind: 'err', text: e instanceof Error ? e.message : String(e) })
+    } finally {
+      setRunning(null)
     }
   }
 
@@ -200,6 +259,34 @@ export default function Admin() {
       </div>
 
       {autoMsg && <div className={'note ' + (autoMsg.kind === 'ok' ? 'ok' : 'err')} style={{ marginTop: 12 }}>{autoMsg.text}</div>}
+
+      <h3 style={{ fontSize: 13, fontWeight: 700, margin: '22px 0 8px' }}>Test the mailing system</h3>
+      <p className="small muted" style={{ marginTop: 0 }}>
+        These run the real job on the server, using the real SMTP settings — the same path the daily schedule uses.
+        Start with <b>Send test email</b>.
+      </p>
+
+      <div className="controls" style={{ marginBottom: 8 }}>
+        <input type="email" value={testTo} onChange={(e) => setTestTo(e.target.value)}
+               placeholder="where to send the test" style={{ width: 250 }} />
+        <button className="btn" onClick={() => doRun('test')} disabled={running !== null}>
+          {running === 'test' ? 'Sending…' : 'Send test email'}
+        </button>
+        <button className="btn ghost" onClick={() => doRun('dry')} disabled={running !== null}
+                title="Report what a real run would send, without sending anything">
+          {running === 'dry' ? 'Checking…' : 'Preview (sends nothing)'}
+        </button>
+        <button className="btn ghost" onClick={() => doRun('now')} disabled={running !== null}
+                title="Send today's digest now instead of waiting for the schedule">
+          {running === 'now' ? 'Running…' : 'Run digest now'}
+        </button>
+      </div>
+
+      {runMsg && (
+        <div className={'note ' + (runMsg.kind === 'ok' ? 'ok' : 'err')} style={{ whiteSpace: 'pre-wrap' }}>
+          {runMsg.text}
+        </div>
+      )}
 
       <h3 style={{ fontSize: 13, fontWeight: 700, margin: '20px 0 8px' }}>Recent sends</h3>
       {log === null ? (

@@ -45,7 +45,14 @@ What it sets:
 | `SMTP_PASS` | *prompted* |
 | `SMTP_FROM` | `Transcure Lead Tracker <muhammad.danish@transcure.biz>` |
 | `APP_URL` | `https://transcure-leads.vercel.app` |
-| `CRON_SECRET` | generated, printed once |
+
+`CRON_SECRET` is **not** needed as a function secret. The shared secret lives in Supabase Vault under the name `cron_secret`; the scheduled job and the function each read that single copy, so there is nothing to keep in sync. Create it once with:
+
+```sql
+select vault.create_secret(encode(gen_random_bytes(24), 'hex'), 'cron_secret');
+```
+
+Setting a `CRON_SECRET` env var still overrides Vault if you prefer that route.
 
 Notes:
 
@@ -68,33 +75,37 @@ supabase functions deploy follow-up-reminders --no-verify-jwt
 
 `--no-verify-jwt` is required so the scheduler can call it. The function is not left open: it rejects any request without the right `x-cron-secret`.
 
-## 4. Test before scheduling
+## 4. Test it from the app
 
-Check the SQL wiring without sending anything:
+**Admin → Follow-ups — Automatic reminders → Test the mailing system.** Three buttons, no CLI or `curl` needed:
 
-```bash
-curl -s -H "x-cron-secret: $CRON_SECRET" \
-  "https://<PROJECT_REF>.supabase.co/functions/v1/follow-up-reminders?dry=true"
-```
+| Button | Does |
+|---|---|
+| **Send test email** | Sends one email to the address in the box |
+| **Preview (sends nothing)** | Reports who *would* be emailed and how many items each digest holds |
+| **Run digest now** | Sends today's real digest immediately instead of waiting for the schedule |
 
-Returns who *would* be emailed and how many items each digest holds.
+These call the deployed function over the real SMTP path — the same one the schedule uses — and report failures in plain language (missing secrets, rejected login, unreachable host) rather than a raw error.
 
-Then send one real email to confirm the SMTP credentials work:
+This works because the function accepts either a matching `x-cron-secret` (how the cron job authenticates) or a signed-in tracker user (how these buttons authenticate). No secret is exposed to the browser.
 
-```bash
-curl -s -H "x-cron-secret: $CRON_SECRET" \
-  "https://<PROJECT_REF>.supabase.co/functions/v1/follow-up-reminders?test=you@transcure.com"
-```
-
-Get this working before moving on. A wrong password or port surfaces here as a clear SMTP error; on a schedule it would just fail silently at 9am.
+Get **Send test email** working before relying on the schedule. A wrong password or port surfaces here immediately; on a schedule it would fail quietly at 9am.
 
 ## 5. Schedule it
 
-Open `app/supabase/migrations/004_cron_schedule.sql`, fill in the three placeholders, and run it:
+Already done for the Transcure project — `pg_cron` and `pg_net` are enabled and the job `follow-up-reminders-daily` runs at `0 4 * * *` (04:00 UTC = 09:00 Karachi).
+
+For a fresh project, or to change the hour, use `app/supabase/migrations/004_cron_schedule.sql` and fill in:
 
 - `<PROJECT_REF>` — your project ref (Settings → General)
-- `<CRON_SECRET>` — the value from step 2
+- `<ANON_KEY>` — anon / publishable key (Settings → API); public, only satisfies the gateway
 - `<UTC_HOUR>` — send hour **in UTC**. pg_cron runs on UTC; Pakistan is UTC+5 with no DST, so subtract 5: **09:00 PK → `4`**
+
+Verify:
+
+```sql
+select jobname, schedule, active from cron.job;
+```
 
 ## 6. Set the recipient
 

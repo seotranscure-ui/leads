@@ -52,12 +52,29 @@ export default function Admin() {
       const s = r.secretsPresent ?? {}
       const flag = (k: string) => (s[k] === true ? '✓ set' : s[k] === false ? '✗ MISSING' : String(s[k]))
       const libOk = (r.smtpLib ?? '').startsWith('loaded')
+      const tcp = r.tcp ?? {}
+      const tcpLines = Object.entries(tcp).map(([k, v]) => `  ${k} → ${v}`)
+      const anyReachable = Object.values(tcp).some((v) => v.startsWith('reachable'))
+      const probed = Object.keys(tcp).length > 0
+
+      let verdict: string
+      if (!libOk) {
+        verdict = 'The mail library could not load inside the function. That is a dependency problem, not a credentials problem.'
+      } else if (probed && !anyReachable) {
+        verdict = 'The function cannot open a connection to your mail server on either port. Nothing about the credentials matters until this is fixed — the traffic is not getting through. Most likely the SMTP port is blocked outbound from Supabase, or the server only accepts connections from inside your network.'
+      } else if (probed && anyReachable) {
+        verdict = 'The mail server is reachable, so any send failure from here is the credentials or the server rejecting the message.'
+      } else {
+        verdict = 'Deployment and config are fine.'
+      }
+
       return {
-        kind: libOk ? 'ok' : 'err',
+        kind: libOk && (!probed || anyReachable) ? 'ok' : 'err',
         text: [
           `Function is deployed and reachable. Authenticated as: ${r.authedAs}.`,
           '',
           `SMTP library: ${r.smtpLib}`,
+          ...(tcpLines.length ? ['', 'Connection to the mail server:', ...tcpLines] : []),
           '',
           `SMTP_HOST: ${flag('SMTP_HOST')}`,
           `SMTP_PORT: ${s.SMTP_PORT}`,
@@ -66,9 +83,7 @@ export default function Admin() {
           `SMTP_FROM: ${flag('SMTP_FROM')}`,
           `APP_URL:   ${s.APP_URL}`,
           '',
-          libOk
-            ? 'Deployment and config are fine — if a send still fails, the problem is the mail server or the credentials.'
-            : 'The mail library could not load inside the function. That is a dependency problem, not a credentials problem.',
+          verdict,
         ].join('\n'),
       }
     }

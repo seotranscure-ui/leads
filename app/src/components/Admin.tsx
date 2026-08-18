@@ -2,7 +2,7 @@ import { useEffect, useState, type ChangeEvent } from 'react'
 import { useAppData } from '../data/AppData'
 import { ruleLabel, type HighTicketRule } from '../lib/leads'
 import {
-  fetchReminderLog, sendTestReminder, previewReminders, runRemindersNow,
+  fetchReminderLog, sendTestReminder, previewReminders, runRemindersNow, pingReminders,
   type ReminderLog, type ReminderRunResult,
 } from '../lib/api'
 import Logo from './Logo'
@@ -41,12 +41,37 @@ export default function Admin() {
 
   // ── Test / preview / run-now against the reminder Edge Function ─────────────
   const [testTo, setTestTo] = useState('')
-  const [running, setRunning] = useState<'test' | 'dry' | 'now' | null>(null)
+  const [running, setRunning] = useState<'test' | 'dry' | 'now' | 'ping' | null>(null)
   const [runMsg, setRunMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
   useEffect(() => { if (!testTo && managerEmail) setTestTo(managerEmail) }, [managerEmail])
 
   // Turn the function's reply into something a non-developer can act on.
   const describe = (r: ReminderRunResult): { kind: 'ok' | 'err'; text: string } => {
+    // Diagnostic result — report config presence and whether the mail library loads.
+    if (r.ok && r.boot) {
+      const s = r.secretsPresent ?? {}
+      const flag = (k: string) => (s[k] === true ? '✓ set' : s[k] === false ? '✗ MISSING' : String(s[k]))
+      const libOk = (r.smtpLib ?? '').startsWith('loaded')
+      return {
+        kind: libOk ? 'ok' : 'err',
+        text: [
+          `Function is deployed and reachable. Authenticated as: ${r.authedAs}.`,
+          '',
+          `SMTP library: ${r.smtpLib}`,
+          '',
+          `SMTP_HOST: ${flag('SMTP_HOST')}`,
+          `SMTP_PORT: ${s.SMTP_PORT}`,
+          `SMTP_USER: ${flag('SMTP_USER')}`,
+          `SMTP_PASS: ${flag('SMTP_PASS')}`,
+          `SMTP_FROM: ${flag('SMTP_FROM')}`,
+          `APP_URL:   ${s.APP_URL}`,
+          '',
+          libOk
+            ? 'Deployment and config are fine — if a send still fails, the problem is the mail server or the credentials.'
+            : 'The mail library could not load inside the function. That is a dependency problem, not a credentials problem.',
+        ].join('\n'),
+      }
+    }
     if (!r.ok) {
       if (r.missingSecrets?.length) {
         return { kind: 'err', text: `Not configured yet — these secrets are missing in Supabase: ${r.missingSecrets.join(', ')}. Add them under Project Settings → Edge Functions → Secrets, then redeploy the function.` }
@@ -79,7 +104,7 @@ export default function Admin() {
     return { kind: 'ok', text: parts.join(' · ') }
   }
 
-  const doRun = async (kind: 'test' | 'dry' | 'now') => {
+  const doRun = async (kind: 'test' | 'dry' | 'now' | 'ping') => {
     if (kind === 'test' && !testTo.trim()) {
       setRunMsg({ kind: 'err', text: 'Enter an address to send the test to.' }); return
     }
@@ -87,11 +112,19 @@ export default function Admin() {
     try {
       const r = kind === 'test' ? await sendTestReminder(testTo.trim())
               : kind === 'dry' ? await previewReminders()
+              : kind === 'ping' ? await pingReminders()
               : await runRemindersNow()
       setRunMsg(describe(r))
       if (kind === 'now' || kind === 'test') fetchReminderLog(20).then(setLog).catch(() => {})
     } catch (e) {
-      setRunMsg({ kind: 'err', text: e instanceof Error ? e.message : String(e) })
+      // A fetch-level failure never reaches the function at all.
+      const msg = e instanceof Error ? e.message : String(e)
+      setRunMsg({
+        kind: 'err',
+        text: /failed to send a request|fetch/i.test(msg)
+          ? `The request never reached the Edge Function.\n\nThis usually means the function crashed on start-up (so the platform replied without CORS headers), or it is not deployed. Check the function's Logs tab in Supabase for a boot or import error.\n\n${msg}`
+          : msg,
+      })
     } finally {
       setRunning(null)
     }
@@ -269,10 +302,14 @@ export default function Admin() {
       </p>
 
       <div className="controls" style={{ marginBottom: 8 }}>
+        <button className="btn ghost" onClick={() => doRun('ping')} disabled={running !== null}
+                title="Check the function is deployed and can see its settings — sends nothing, opens no connection">
+          {running === 'ping' ? 'Checking…' : '① Diagnose'}
+        </button>
         <input type="email" value={testTo} onChange={(e) => setTestTo(e.target.value)}
                placeholder="where to send the test" style={{ width: 250 }} />
         <button className="btn" onClick={() => doRun('test')} disabled={running !== null}>
-          {running === 'test' ? 'Sending…' : 'Send test email'}
+          {running === 'test' ? 'Sending…' : '② Send test email'}
         </button>
         <button className="btn ghost" onClick={() => doRun('dry')} disabled={running !== null}
                 title="Report what a real run would send, without sending anything">

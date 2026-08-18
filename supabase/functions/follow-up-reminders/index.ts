@@ -18,7 +18,32 @@
 //   CRON_SECRET (if set, callers must present it — see the auth check below)
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.7'
-import { SMTPClient } from 'https://deno.land/x/denomailer@1.6.0/mod.ts'
+
+// denomailer is imported lazily inside sendMail rather than at the top level.
+// A top-level import that fails to resolve crashes the whole function on boot,
+// and the platform then answers without CORS headers — which surfaces in the
+// browser as the opaque "Failed to send a request to the Edge Function" with no
+// way to see the real cause. Loading it on demand keeps the function bootable
+// and turns a dependency problem into a readable JSON error.
+type SMTPClientCtor = new (opts: unknown) => {
+  send(opts: unknown): Promise<unknown>
+  close(): Promise<void>
+}
+let SMTPClientRef: SMTPClientCtor | null = null
+
+async function loadSMTPClient(): Promise<SMTPClientCtor> {
+  if (SMTPClientRef) return SMTPClientRef
+  try {
+    const mod = await import('https://deno.land/x/denomailer@1.6.0/mod.ts')
+    SMTPClientRef = (mod as { SMTPClient: SMTPClientCtor }).SMTPClient
+    return SMTPClientRef
+  } catch (e) {
+    throw new Error(
+      'Could not load the SMTP library (denomailer). This is a dependency/network problem inside the Edge Function, not a credentials problem. Underlying error: ' +
+      (e instanceof Error ? e.message : String(e)),
+    )
+  }
+}
 
 // ── config ───────────────────────────────────────────────────────────────────
 
@@ -109,6 +134,7 @@ interface DueItem { lead: Lead; step: Step; pending: string[]; overdueDays: numb
 // ── mail ─────────────────────────────────────────────────────────────────────
 
 async function sendMail(to: string, subject: string, html: string, text: string): Promise<void> {
+  const SMTPClient = await loadSMTPClient()
   const port = Number(env('SMTP_PORT', '587'))
   const client = new SMTPClient({
     connection: {
@@ -327,6 +353,29 @@ Deno.serve(async (req: Request) => {
       ok: false,
       error: 'No service key available. Neither SUPABASE_SECRET_KEYS nor SUPABASE_SERVICE_ROLE_KEY is set — both are normally injected automatically, so check the function is deployed to the right project.',
     }, { status: 500, headers: CORS })
+  }
+
+  // Diagnostic: prove the function booted, auth worked, and report which config
+  // is present — without importing the mail library or opening any connection.
+  // If this succeeds but a send fails, the problem is SMTP, not the deployment.
+  if (param('ping') === 'true') {
+    let smtpLib = 'not tested'
+    try { await loadSMTPClient(); smtpLib = 'loaded ok' }
+    catch (e) { smtpLib = 'FAILED: ' + (e instanceof Error ? e.message : String(e)) }
+    return Response.json({
+      ok: true,
+      boot: 'ok',
+      authedAs: isCron ? 'cron' : 'user',
+      smtpLib,
+      secretsPresent: {
+        SMTP_HOST: !!env('SMTP_HOST'),
+        SMTP_PORT: env('SMTP_PORT') || '(default 587)',
+        SMTP_USER: !!env('SMTP_USER'),
+        SMTP_PASS: !!env('SMTP_PASS'),
+        SMTP_FROM: !!env('SMTP_FROM'),
+        APP_URL: APP_URL,
+      },
+    }, { headers: CORS })
   }
 
   // Report exactly which SMTP secrets are missing — the common setup failure.

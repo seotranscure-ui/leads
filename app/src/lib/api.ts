@@ -314,6 +314,11 @@ export interface ReminderRunResult {
   failed?: { to: string; error: string }[]
   note?: string
   skipped?: string
+  // ping diagnostic
+  boot?: string
+  authedAs?: string
+  smtpLib?: string
+  secretsPresent?: Record<string, unknown>
 }
 
 async function invokeReminders(payload: Record<string, unknown>): Promise<ReminderRunResult> {
@@ -343,6 +348,15 @@ export function previewReminders(): Promise<ReminderRunResult> {
 /** Run the digest for real, now, instead of waiting for the schedule. */
 export function runRemindersNow(): Promise<ReminderRunResult> {
   return invokeReminders({})
+}
+
+/**
+ * Prove the function booted, authenticated, and can see its config — without
+ * importing the mail library or opening an SMTP connection. Separates a broken
+ * deployment from a broken mail server.
+ */
+export function pingReminders(): Promise<ReminderRunResult> {
+  return invokeReminders({ ping: true })
 }
 
 export async function getAutomation(): Promise<Automation> {

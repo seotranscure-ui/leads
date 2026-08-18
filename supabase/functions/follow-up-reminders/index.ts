@@ -255,33 +255,90 @@ function autoLostBody(leads: Lead[]): { html: string; text: string; subject: str
 
 // ── main ─────────────────────────────────────────────────────────────────────
 
+const CORS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-cron-secret',
+  'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
+}
+
 Deno.serve(async (req: Request) => {
-  // The function is deployed with --no-verify-jwt so pg_cron can reach it, so
-  // gate it on a shared secret instead when one is configured.
-  if (CRON_SECRET) {
-    const given = req.headers.get('x-cron-secret') ?? new URL(req.url).searchParams.get('secret')
-    if (given !== CRON_SECRET) {
-      return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json' } })
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
+
+  const url = new URL(req.url)
+
+  // Parameters may arrive as query string (browser / pg_net) or JSON body
+  // (supabase.functions.invoke from the app).
+  let body: Record<string, unknown> = {}
+  if (req.method === 'POST') {
+    try { body = await req.json() } catch { /* empty or non-JSON body is fine */ }
+  }
+  const param = (k: string): string | null => {
+    const v = body[k]
+    if (typeof v === 'string' && v) return v
+    if (v === true) return 'true'
+    return url.searchParams.get(k)
+  }
+
+  // Two ways in:
+  //   1. the scheduled job, proving itself with the shared CRON_SECRET
+  //   2. a signed-in team member using the Admin test button, proving itself
+  //      with a real user JWT (the anon key alone is NOT enough — it is public)
+  const givenSecret = req.headers.get('x-cron-secret') ?? url.searchParams.get('secret')
+
+  // The shared secret lives in Supabase Vault, so the cron job and this function
+  // read the same single copy and there is nothing to keep in sync. An env var of
+  // the same name still wins if one is set.
+  let expectedSecret = CRON_SECRET
+  if (!expectedSecret && givenSecret && SERVICE_KEY) {
+    try {
+      const { data } = await createClient(SUPABASE_URL, SERVICE_KEY)
+        .schema('vault').from('decrypted_secrets')
+        .select('decrypted_secret').eq('name', 'cron_secret').maybeSingle()
+      const v = (data as { decrypted_secret?: string } | null)?.decrypted_secret
+      if (v) expectedSecret = v
+    } catch { /* vault unavailable — fall through to the user-JWT path */ }
+  }
+  const isCron = !!expectedSecret && givenSecret === expectedSecret
+
+  let isUser = false
+  if (!isCron && SERVICE_KEY) {
+    const auth = req.headers.get('Authorization') ?? ''
+    const token = auth.toLowerCase().startsWith('bearer ') ? auth.slice(7).trim() : ''
+    if (token) {
+      try {
+        const { data } = await createClient(SUPABASE_URL, SERVICE_KEY).auth.getUser(token)
+        isUser = !!data?.user
+      } catch { /* not a user token */ }
     }
+  }
+
+  if (!isCron && !isUser) {
+    return Response.json({
+      ok: false,
+      error: 'unauthorized — send a matching x-cron-secret, or call this while signed in to the tracker',
+    }, { status: 401, headers: CORS })
   }
 
   if (!SERVICE_KEY) {
     return Response.json({
       ok: false,
       error: 'No service key available. Neither SUPABASE_SECRET_KEYS nor SUPABASE_SERVICE_ROLE_KEY is set — both are normally injected automatically, so check the function is deployed to the right project.',
-    }, { status: 500 })
+    }, { status: 500, headers: CORS })
   }
-  if (!env('SMTP_HOST')) {
+
+  // Report exactly which SMTP secrets are missing — the common setup failure.
+  const missing = ['SMTP_HOST', 'SMTP_USER', 'SMTP_PASS'].filter((k) => !env(k))
+  if (missing.length) {
     return Response.json({
       ok: false,
-      error: 'SMTP_HOST is not set. Add the SMTP_* secrets under Project Settings -> Edge Functions -> Secrets, then redeploy.',
-    }, { status: 500 })
+      error: `Missing SMTP secret(s): ${missing.join(', ')}. Add them under Project Settings -> Edge Functions -> Secrets, then redeploy the function.`,
+      missingSecrets: missing,
+    }, { status: 400, headers: CORS })
   }
 
   const db = createClient(SUPABASE_URL, SERVICE_KEY)
-  const url = new URL(req.url)
-  const dryRun = url.searchParams.get('dry') === 'true'
-  const testTo = url.searchParams.get('test')
+  const dryRun = param('dry') === 'true'
+  const testTo = param('test')
 
   try {
     // Settings
@@ -296,10 +353,10 @@ Deno.serve(async (req: Request) => {
       const { html, text, subject } = digestBody([], todayIn(cfg.timezone))
       await sendMail(testTo, '[TEST] ' + subject, html, text)
       await db.from('follow_up_reminders').insert({ sent_on: todayIn(cfg.timezone), recipient: testTo, kind: 'test', subject, step_count: 0, status: 'sent' })
-      return Response.json({ ok: true, tested: testTo })
+      return Response.json({ ok: true, tested: testTo }, { headers: CORS })
     }
 
-    if (!cfg.enabled) return Response.json({ ok: true, skipped: 'automation disabled' })
+    if (!cfg.enabled) return Response.json({ ok: true, skipped: 'automation disabled' }, { headers: CORS })
 
     const today = todayIn(cfg.timezone)
 
@@ -307,7 +364,7 @@ Deno.serve(async (req: Request) => {
     const { data: seqs, error: se } = await db.from('follow_up_sequences').select('*').eq('status', 'active')
     if (se) throw se
     const sequences = (seqs ?? []) as Sequence[]
-    if (!sequences.length) return Response.json({ ok: true, today, note: 'no active sequences' })
+    if (!sequences.length) return Response.json({ ok: true, today, note: 'no active sequences' }, { headers: CORS })
 
     const seqIds = sequences.map((s) => s.id)
     const { data: stepRows, error: ste } = await db.from('follow_up_steps').select('*').in('sequence_id', seqIds)
@@ -435,10 +492,10 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    return Response.json({ ok: true, today, dryRun, digestsSent: sent, prompted, autoLost, failed })
+    return Response.json({ ok: true, today, dryRun, digestsSent: sent, prompted, autoLost, failed }, { headers: CORS })
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     console.error('follow-up-reminders failed:', msg)
-    return Response.json({ ok: false, error: msg }, { status: 500 })
+    return Response.json({ ok: false, error: msg }, { status: 500, headers: CORS })
   }
 })

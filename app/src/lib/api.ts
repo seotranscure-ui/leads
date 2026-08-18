@@ -297,6 +297,52 @@ export const DEFAULT_AUTOMATION: Automation = {
   enabled: true, digestHour: 9, timezone: 'Asia/Karachi', graceDays: 7, remindOverdueDaily: true,
 }
 
+// Invoke the reminder Edge Function as the signed-in user. The function verifies
+// the caller is a real tracker user, so no client-side secret is involved.
+export interface ReminderRunResult {
+  ok: boolean
+  error?: string
+  missingSecrets?: string[]
+  tested?: string
+  today?: string
+  dryRun?: boolean
+  digestsSent?: string[]
+  prompted?: number
+  autoLost?: number
+  failed?: { to: string; error: string }[]
+  note?: string
+  skipped?: string
+}
+
+async function invokeReminders(payload: Record<string, unknown>): Promise<ReminderRunResult> {
+  const { data, error } = await supabase.functions.invoke('follow-up-reminders', { body: payload })
+  // A non-2xx reply still carries a useful JSON body, so read it rather than
+  // surfacing the bare "non-2xx status code" message.
+  if (error) {
+    const ctx = (error as { context?: Response }).context
+    if (ctx && typeof ctx.json === 'function') {
+      try { return await ctx.json() as ReminderRunResult } catch { /* fall through */ }
+    }
+    return { ok: false, error: error.message || String(error) }
+  }
+  return (data ?? { ok: false, error: 'empty response' }) as ReminderRunResult
+}
+
+/** Send one test email to `to`, to prove SMTP works. */
+export function sendTestReminder(to: string): Promise<ReminderRunResult> {
+  return invokeReminders({ test: to })
+}
+
+/** Report what a real run would send, without sending anything. */
+export function previewReminders(): Promise<ReminderRunResult> {
+  return invokeReminders({ dry: true })
+}
+
+/** Run the digest for real, now, instead of waiting for the schedule. */
+export function runRemindersNow(): Promise<ReminderRunResult> {
+  return invokeReminders({})
+}
+
 export async function getAutomation(): Promise<Automation> {
   const { data } = await supabase.from('app_settings').select('value').eq('key', 'follow_up_automation').maybeSingle()
   const v = data?.value

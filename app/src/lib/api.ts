@@ -307,6 +307,8 @@ export interface ReminderRunResult {
   today?: string
   dryRun?: boolean
   digestsSent?: string[]
+  /** Recipients whose digest already went out today, so it was not re-sent. */
+  alreadySentToday?: string[]
   prompted?: number
   autoLost?: number
   failed?: { to: string; error: string }[]

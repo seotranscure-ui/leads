@@ -74,6 +74,18 @@ export default function Dashboard() {
       spRows: Object.entries(sp).sort((a, b) => b[1].leads - a[1].leads) }
   }, [leads, rule, from, to])
 
+  // Must run on every render, before any early return below — a hook called
+  // conditionally (e.g. only once loading/error/empty have passed) makes this
+  // component call a different number of hooks between renders, which React
+  // treats as a hard error and unmounts the whole tree with no way to catch it.
+  const followUpsDue = useMemo(() =>
+    steps.filter((s) => {
+      const seq = sequences.find((sq) => sq.id === s.sequence_id)
+      return seq?.status === 'active' && (isOverdue(s) || isDueToday(s))
+    }).length,
+    [steps, sequences],
+  )
+
   if (loading) return <div className="center-msg">Loading leads…</div>
   if (error) return <div className="note err">{error}</div>
   if (!leads.length)
@@ -88,14 +100,6 @@ export default function Dashboard() {
   const totalWon = wons
   const isSeo = (l: Lead) => l.source.toLowerCase() === 'seo'
   const hasData = totalLeads > 0 || wons > 0
-
-  const followUpsDue = useMemo(() =>
-    steps.filter((s) => {
-      const seq = sequences.find((sq) => sq.id === s.sequence_id)
-      return seq?.status === 'active' && (isOverdue(s) || isDueToday(s))
-    }).length,
-    [steps, sequences],
-  )
 
   const kpis: [string, string | number, string, () => void][] = [
     ['Total leads', totalLeads, 'came in this period', () => go('Leads in period', (l) => createdIn(l))],

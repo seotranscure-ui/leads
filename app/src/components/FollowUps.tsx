@@ -7,6 +7,7 @@ import {
   type FollowUpSequence, type FollowUpStep,
 } from '../lib/followups'
 import { displayName, type Lead } from '../lib/leads'
+import StageChip from './StageChip'
 
 interface SeqRow {
   seq: FollowUpSequence
@@ -246,7 +247,7 @@ export default function FollowUps() {
                           {practice && <div className="small muted">{practice}</div>}
                           {lead?.email && <div className="small muted">{lead.email}</div>}
                         </td>
-                        <td>{lead && <span className={'chip stage-' + lead.stage}>{lead.stage}</span>}</td>
+                        <td>{lead && <StageChip stage={lead.stage} />}</td>
                         <td>
                           {/* One pill per week: green done, red overdue, amber due today. */}
                           <div style={{ display: 'flex', gap: 3, marginBottom: 4 }}>

@@ -143,6 +143,22 @@ interface Step { id: string; sequence_id: string; step_number: number; scheduled
 
 interface DueItem { lead: Lead; step: Step; pending: string[]; overdueDays: number }
 
+// Only the fields of `projects` this job needs.
+interface FunnelStageCfg { name: string; won: boolean; lost: boolean; statuses: string[] }
+interface ProjectCfg {
+  id: string
+  name: string
+  follow_up_manager_email: string | null
+  follow_up_automation: Partial<Automation> | null
+  funnel: { stages: FunnelStageCfg[] } | null
+}
+
+/** The stage/status a lead moves to when auto-marked Lost, per that project's funnel. */
+function lostFor(p: ProjectCfg): { stage: string; status: string } {
+  const s = p.funnel?.stages?.find((x) => x.lost)
+  return { stage: s?.name ?? 'Lost', status: s?.statuses?.[0] ?? 'Lost Lead' }
+}
+
 // ── mail ─────────────────────────────────────────────────────────────────────
 
 // Can we even open a TCP socket to the mail server? Distinguishes a blocked or
@@ -234,7 +250,8 @@ async function sendMail(to: string, subject: string, html: string, text: string)
 
 // ── email bodies ─────────────────────────────────────────────────────────────
 
-function digestBody(items: DueItem[], today: string): { html: string; text: string; subject: string } {
+function digestBody(items: DueItem[], today: string, projectName?: string): { html: string; text: string; subject: string } {
+  const tag = projectName ? `[${projectName}] ` : ''
   const overdue = items.filter((i) => i.overdueDays > 0).sort((a, b) => b.overdueDays - a.overdueDays)
   const dueToday = items.filter((i) => i.overdueDays === 0)
 
@@ -242,8 +259,8 @@ function digestBody(items: DueItem[], today: string): { html: string; text: stri
     l.lead_name || `${l.first_name ?? ''} ${l.last_name ?? ''}`.trim() || l.record_id
 
   const subject = overdue.length
-    ? `Follow-ups: ${overdue.length} overdue, ${dueToday.length} due today`
-    : `Follow-ups: ${dueToday.length} due today`
+    ? `${tag}Follow-ups: ${overdue.length} overdue, ${dueToday.length} due today`
+    : `${tag}Follow-ups: ${dueToday.length} due today`
 
   // With nothing due there is no lead content at all, which previously produced a
   // near-empty body. Say so explicitly instead.
@@ -280,7 +297,7 @@ function digestBody(items: DueItem[], today: string): { html: string; text: stri
   <div style="font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;background:#f5f3f8;padding:24px;color:#241f2b;">
     <div style="max-width:640px;margin:0 auto;">
       <div style="border-bottom:3px solid #7b2d6b;padding-bottom:10px;margin-bottom:4px;">
-        <span style="font-size:19px;font-weight:700;color:#5c2050;">Follow-ups for ${today}</span>
+        <span style="font-size:19px;font-weight:700;color:#5c2050;">${projectName ? esc(projectName) + " \u00b7 " : ""}Follow-ups for ${today}</span>
       </div>
       <p style="font-size:13px;color:#6e6878;">Each lead below still has outreach outstanding for that week. A week stops appearing here once every one of its channels is ticked off in the tracker.</p>
       ${emptyNote}
@@ -487,13 +504,26 @@ Deno.serve(async (req: Request) => {
   const testTo = param('test')
 
   try {
-    // Settings
-    const { data: settingRow } = await db.from('app_settings').select('value').eq('key', 'follow_up_automation').maybeSingle()
-    const cfg: Automation = { ...DEFAULT_AUTOMATION, ...((settingRow?.value ?? {}) as Partial<Automation>) }
+    // Each workspace carries its own reminder settings, recipient and funnel, so
+    // the job runs once per project rather than once globally. Falls back to the
+    // legacy app_settings rows if migration 006 has not been applied yet.
+    const { data: projectRows } = await db.from('projects').select('*').order('sort_order')
+    let projects: ProjectCfg[] = (projectRows ?? []) as ProjectCfg[]
 
-    const { data: emailRow } = await db.from('app_settings').select('value').eq('key', 'follow_up_manager_email').maybeSingle()
-    const defaultEmail = typeof emailRow?.value === 'string' ? emailRow.value.trim() : ''
+    if (!projects.length) {
+      const { data: settingRow } = await db.from('app_settings').select('value').eq('key', 'follow_up_automation').maybeSingle()
+      const { data: emailRow } = await db.from('app_settings').select('value').eq('key', 'follow_up_manager_email').maybeSingle()
+      projects = [{
+        id: 'transcure',
+        name: 'Transcure',
+        follow_up_manager_email: typeof emailRow?.value === 'string' ? emailRow.value : null,
+        follow_up_automation: { ...DEFAULT_AUTOMATION, ...((settingRow?.value ?? {}) as Partial<Automation>) },
+        funnel: null,
+      }]
+    }
 
+    const cfgFor = (p: ProjectCfg): Automation => ({ ...DEFAULT_AUTOMATION, ...(p.follow_up_automation ?? {}) })
+    const cfg = cfgFor(projects[0])
     const today = todayIn(cfg.timezone)
 
     // One-off deliverability check. Uses a representative sample rather than an
@@ -518,7 +548,7 @@ Deno.serve(async (req: Request) => {
           overdueDays: 0,
         },
       ]
-      const { html, text, subject } = digestBody(sampleItems, today)
+      const { html, text, subject } = digestBody(sampleItems, today, projects[0]?.name)
       const testSubject = '[TEST] ' + subject
       const banner = '<p style="font-size:13px;background:#f4ebf2;border:1px solid #ede2eb;color:#5c2050;padding:11px 14px;border-radius:9px;"><b>This is a test.</b> The two leads below are made up, to show the layout. Real reminders list your actual leads.</p>'
       await sendMail(testTo, testSubject, html.replace('<p style="font-size:13px;color:#6e6878;">', banner + '<p style="font-size:13px;color:#6e6878;">'), 'THIS IS A TEST — the leads below are samples.\n\n' + text)
@@ -526,13 +556,27 @@ Deno.serve(async (req: Request) => {
       return Response.json({ ok: true, tested: testTo }, { headers: CORS })
     }
 
-    if (!cfg.enabled) return Response.json({ ok: true, skipped: 'automation disabled' }, { headers: CORS })
+    // ── Run the whole job once per workspace ──
+    const perProject: Record<string, unknown>[] = []
+    const sentAll: string[] = []
+    const skippedAll: string[] = []
+    const failedAll: { to: string; error: string }[] = []
+    let promptedAll = 0
+    let autoLostAll = 0
 
-    // Load everything active in three reads.
-    const { data: seqs, error: se } = await db.from('follow_up_sequences').select('*').eq('status', 'active')
-    if (se) throw se
-    const sequences = (seqs ?? []) as Sequence[]
-    if (!sequences.length) return Response.json({ ok: true, today, note: 'no active sequences' }, { headers: CORS })
+    for (const proj of projects) {
+      const cfg = cfgFor(proj)
+      const defaultEmail = (proj.follow_up_manager_email ?? '').trim()
+      const today = todayIn(cfg.timezone)
+
+      if (!cfg.enabled) { perProject.push({ project: proj.name, skipped: 'automation disabled' }); continue }
+
+      // Load this project's active sequences and their steps.
+      const { data: seqs, error: se } = await db.from('follow_up_sequences')
+        .select('*').eq('status', 'active').eq('project_id', proj.id)
+      if (se) throw se
+      const sequences = (seqs ?? []) as Sequence[]
+      if (!sequences.length) { perProject.push({ project: proj.name, note: 'no active sequences' }); continue }
 
     const seqIds = sequences.map((s) => s.id)
     const { data: stepRows, error: ste } = await db.from('follow_up_steps').select('*').in('sequence_id', seqIds)
@@ -579,7 +623,7 @@ Deno.serve(async (req: Request) => {
     const skipped: string[] = []
 
     for (const [to, items] of byRecipient) {
-      const { html, text, subject } = digestBody(items, today)
+      const { html, text, subject } = digestBody(items, today, proj.name)
       if (dryRun) { sent.push(`${to} (dry, ${items.length} items)`); continue }
 
       // Claim today's slot BEFORE sending. The unique index on
@@ -588,7 +632,7 @@ Deno.serve(async (req: Request) => {
       // cron or a manual "Run digest now" cannot deliver a duplicate. Sending
       // first would only have de-duplicated the log row, not the email.
       const { data: claim, error: claimErr } = await db.from('follow_up_reminders')
-        .insert({ sent_on: today, recipient: to, kind: 'digest', subject, step_count: items.length, status: 'sent' })
+        .insert({ sent_on: today, recipient: to, kind: 'digest', project_id: proj.id, subject, step_count: items.length, status: 'sent' })
         .select('id').single()
 
       if (claimErr) {
@@ -640,14 +684,14 @@ Deno.serve(async (req: Request) => {
       const { html, text, subject } = promptBody(lead, cfg.graceDays)
       try {
         await sendMail(to, subject, html, text)
-        await db.from('follow_up_reminders').insert({ sent_on: today, recipient: to, kind: 'resolution_prompt', subject, step_count: 5, status: 'sent' })
+        await db.from('follow_up_reminders').insert({ sent_on: today, recipient: to, kind: 'resolution_prompt', project_id: proj.id, subject, step_count: 5, status: 'sent' })
         prompted++
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e)
         failed.push({ to, error: msg })
         // Release the claim so the next run retries instead of silently never prompting.
         await db.from('follow_up_sequences').update({ prompt_sent_at: null }).eq('id', seq.id)
-        await db.from('follow_up_reminders').insert({ sent_on: today, recipient: to, kind: 'resolution_prompt', subject, step_count: 5, status: 'failed', error: msg })
+        await db.from('follow_up_reminders').insert({ sent_on: today, recipient: to, kind: 'resolution_prompt', project_id: proj.id, subject, step_count: 5, status: 'failed', error: msg })
       }
     }
 
@@ -672,7 +716,9 @@ Deno.serve(async (req: Request) => {
         .select('id')
       if (!lostRows?.length) continue
 
-      await db.from('leads').update({ status: 'Lost Lead', stage: 'Lost' }).eq('record_id', seq.lead_record_id)
+      // This project's own Lost stage — another workspace need not have one named "Lost".
+      const lostTarget = lostFor(proj)
+      await db.from('leads').update({ status: lostTarget.status, stage: lostTarget.stage }).eq('record_id', seq.lead_record_id)
       autoLost++
 
       const to = (seq.manager_email ?? '').trim() || defaultEmail
@@ -683,15 +729,30 @@ Deno.serve(async (req: Request) => {
       const { html, text, subject } = autoLostBody(lost)
       try {
         await sendMail(to, subject, html, text)
-        await db.from('follow_up_reminders').insert({ sent_on: today, recipient: to, kind: 'auto_lost', subject, step_count: lost.length, status: 'sent' })
+        await db.from('follow_up_reminders').insert({ sent_on: today, recipient: to, kind: 'auto_lost', project_id: proj.id, subject, step_count: lost.length, status: 'sent' })
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e)
         failed.push({ to, error: msg })
-        await db.from('follow_up_reminders').insert({ sent_on: today, recipient: to, kind: 'auto_lost', subject, step_count: lost.length, status: 'failed', error: msg })
+        await db.from('follow_up_reminders').insert({ sent_on: today, recipient: to, kind: 'auto_lost', project_id: proj.id, subject, step_count: lost.length, status: 'failed', error: msg })
       }
     }
 
-    return Response.json({ ok: true, today, dryRun, digestsSent: sent, alreadySentToday: skipped, prompted, autoLost, failed }, { headers: CORS })
+      perProject.push({
+        project: proj.name, today, digestsSent: sent, alreadySentToday: skipped, prompted, autoLost,
+        failed: failed.length ? failed : undefined,
+      })
+      sentAll.push(...sent.map((t) => `${t} (${proj.name})`))
+      skippedAll.push(...skipped)
+      failedAll.push(...failed)
+      promptedAll += prompted
+      autoLostAll += autoLost
+    }
+
+    return Response.json({
+      ok: true, today, dryRun, projects: perProject,
+      digestsSent: sentAll, alreadySentToday: skippedAll,
+      prompted: promptedAll, autoLost: autoLostAll, failed: failedAll,
+    }, { headers: CORS })
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     console.error('follow-up-reminders failed:', msg)

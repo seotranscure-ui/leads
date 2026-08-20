@@ -8,6 +8,7 @@
 !/prototype/
 !/mcp-server/
 !/supabase/
+!/assessments/
 
 # within the tracked dirs
 node_modules/

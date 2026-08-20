@@ -6,9 +6,37 @@ import {
   type ReminderLog, type ReminderRunResult,
 } from '../lib/api'
 import Logo from './Logo'
+import FunnelEditor from './FunnelEditor'
 
 export default function Admin() {
-  const { logoUrl, updateLogo, rule, updateRule, managerEmail, updateManagerEmail, sequences, automation, updateAutomation } = useAppData()
+  const {
+    logoUrl, updateLogo, rule, updateRule, managerEmail, updateManagerEmail,
+    sequences, automation, updateAutomation, project, funnel, updateProject,
+  } = useAppData()
+
+  // Per-project basics: charge rate and which stage enrols a lead in follow-ups.
+  const [charge, setCharge] = useState(String(project.default_charge_pct))
+  const [fupStage, setFupStage] = useState(project.follow_up_stage ?? '')
+  const [projMsg, setProjMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
+  useEffect(() => {
+    setCharge(String(project.default_charge_pct))
+    setFupStage(project.follow_up_stage ?? '')
+    setProjMsg(null)
+  }, [project.id, project.default_charge_pct, project.follow_up_stage])
+
+  const saveProjectBasics = async () => {
+    const n = Number(charge)
+    if (charge.trim() === '' || isNaN(n) || n < 0 || n > 100) {
+      setProjMsg({ kind: 'err', text: 'Charge % must be a number between 0 and 100.' }); return
+    }
+    setProjMsg(null)
+    try {
+      await updateProject({ default_charge_pct: n, follow_up_stage: fupStage || null })
+      setProjMsg({ kind: 'ok', text: 'Workspace settings saved.' })
+    } catch (e) {
+      setProjMsg({ kind: 'err', text: e instanceof Error ? e.message : String(e) })
+    }
+  }
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
 
@@ -213,8 +241,37 @@ export default function Admin() {
 
   return (
     <>
+    <div className="note" style={{ marginBottom: 18, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+      <span>Every setting on this page applies to the <b>{project.name}</b> workspace only. Switch workspace in the header to configure the other.</span>
+    </div>
+
+    <h2 className="section" style={{ marginTop: 0 }}>Workspace — {project.name}</h2>
     <div className="card" style={{ maxWidth: 660 }}>
-      <h2 className="section" style={{ marginTop: 0 }}>High-ticket criteria</h2>
+      <div className="controls" style={{ marginBottom: 8 }}>
+        <label className="small muted">Default charge %</label>
+        <input type="number" step="0.1" min="0" max="100" value={charge}
+               onChange={(e) => setCharge(e.target.value)} style={{ width: 100 }} />
+        <span className="small muted">of monthly collections, unless a lead overrides it</span>
+      </div>
+      <div className="controls" style={{ marginBottom: 8 }}>
+        <label className="small muted">Follow-ups start at stage</label>
+        <select value={fupStage} onChange={(e) => setFupStage(e.target.value)}>
+          <option value="">— no follow-ups for this workspace —</option>
+          {funnel.stages.map((s) => <option key={s.name} value={s.name}>{s.name}</option>)}
+        </select>
+        <button className="btn" onClick={saveProjectBasics} style={{ marginLeft: 'auto' }}>Save workspace</button>
+      </div>
+      <div className="small muted">
+        Leads reaching <b>{project.follow_up_stage || 'nothing'}</b> are enrolled in the 5-week sequence automatically.
+      </div>
+      {projMsg && <div className={'note ' + (projMsg.kind === 'ok' ? 'ok' : 'err')} style={{ marginTop: 12 }}>{projMsg.text}</div>}
+    </div>
+
+    <h2 className="section">Funnel stages — {project.name}</h2>
+    <FunnelEditor />
+
+    <h2 className="section">High-ticket criteria</h2>
+    <div className="card" style={{ maxWidth: 660 }}>
       <p className="small muted">
         A lead is marked <b>high-ticket ⭐</b> when its <b>Monthly Collections</b> meet this rule (or you set the manual ⭐ on a lead).
         This does <b>not</b> mean "any lead with revenue" — set a real threshold below.

@@ -21,6 +21,36 @@ export async function saveProject(id: string, patch: Partial<Project>): Promise<
   if (error) throw error
 }
 
+/**
+ * Recompute every lead's stage in a project from its stored CRM status.
+ *
+ * Needed because `stage` is denormalised at write time (import / add lead), not
+ * derived on read — so editing a project's status->stage mapping leaves existing
+ * rows on their old stages until this runs.
+ */
+export async function remapStages(projectId: string, stageOf: (status: string | null) => string): Promise<number> {
+  const leads = await fetchLeads(projectId)
+  // Group by target stage so this is a handful of bulk updates, not one per lead.
+  const byStage = new Map<string, string[]>()
+  for (const l of leads) {
+    const want = stageOf(l.status)
+    if (want === l.stage) continue
+    const arr = byStage.get(want) ?? []
+    arr.push(l.record_id)
+    byStage.set(want, arr)
+  }
+  let changed = 0
+  for (const [stage, ids] of byStage) {
+    for (let i = 0; i < ids.length; i += 500) {
+      const slice = ids.slice(i, i + 500)
+      const { error } = await supabase.from('leads').update({ stage }).in('record_id', slice)
+      if (error) throw error
+      changed += slice.length
+    }
+  }
+  return changed
+}
+
 // Fetch all leads for one project (paged past PostgREST's 1000-row default cap).
 export async function fetchLeads(projectId: string = DEFAULT_PROJECT_ID): Promise<Lead[]> {
   const all: Lead[] = []

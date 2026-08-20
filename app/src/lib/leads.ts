@@ -1,9 +1,12 @@
 import { parseSourceTime, fmtInZone, monthKeyOf, PK_ZONE, SRC_ZONE } from './time'
 import { stageFor } from './funnel'
+import { bareRecordId, scopedRecordId, stageForIn, DEFAULT_PROJECT_ID, type Project } from './projects'
 
 // A lead as stored in / read from the DB.
 export interface Lead {
   record_id: string
+  /** Which workspace this lead belongs to. */
+  project_id: string
   lead_owner: string | null
   company: string | null
   first_name: string | null
@@ -82,14 +85,22 @@ export function fixRange(v: string | null | undefined): string {
 
 const g = (row: Record<string, string>, k: string) => (row[k] ?? '').trim() || null
 
-// Map a parsed CSV row to the CRM-owned columns for upsert.
-export function csvRowToLead(row: Record<string, string>): CrmLead {
+/**
+ * Map a parsed CSV row to the CRM-owned columns for upsert.
+ *
+ * `project` decides two things that used to be global: which status->stage map
+ * applies, and whether the record_id gets namespaced. Omitting it keeps the
+ * original single-project behaviour.
+ */
+export function csvRowToLead(row: Record<string, string>, project?: Project): CrmLead {
   const created = parseSourceTime(row['Created Time'])
   const modified = parseSourceTime(row['Modified Time'])
   const name = (row['Lead Name'] || `${row['First Name'] || ''} ${row['Last Name'] || ''}`).trim() || null
   const status = row['Lead Status'] || ''
+  const rawId = (row['Record Id'] || '').trim()
   return {
-    record_id: (row['Record Id'] || '').trim(),
+    record_id: project ? scopedRecordId(project, rawId) : rawId,
+    project_id: project?.id ?? DEFAULT_PROJECT_ID,
     lead_owner: g(row, 'Lead Owner'),
     company: g(row, 'Company'),
     first_name: g(row, 'First Name'),
@@ -99,7 +110,7 @@ export function csvRowToLead(row: Record<string, string>): CrmLead {
     phone: g(row, 'Phone') || g(row, 'Mobile'),
     source: (row['Lead Source'] || '').trim() || '(blank)',
     status,
-    stage: stageFor(status),
+    stage: project ? stageForIn(project.funnel, status) : stageFor(status),
     tag: g(row, 'Tag'),
     specialty: g(row, 'Specialty') || g(row, 'Industry'),
     practice: g(row, 'Practice Name') || g(row, 'Company'),
@@ -164,25 +175,29 @@ export function fmtMoney(n: number | null | undefined): string {
 }
 
 export const DEFAULT_CHARGE_PCT = 5
-// Our charge rate for a lead — per-lead override, else the 5% default.
-export function chargePct(l: Lead): number {
-  return l.manual_charge_pct != null ? l.manual_charge_pct : DEFAULT_CHARGE_PCT
+// Our charge rate for a lead — per-lead override, else the project default
+// (which itself falls back to 5% when no project is supplied).
+export function chargePct(l: Lead, projectDefault: number = DEFAULT_CHARGE_PCT): number {
+  return l.manual_charge_pct != null ? l.manual_charge_pct : projectDefault
 }
 // Our revenue from a lead = its monthly collection × charge%. 0 if no collection.
-export function leadRevenue(l: Lead): number {
+export function leadRevenue(l: Lead, projectDefault: number = DEFAULT_CHARGE_PCT): number {
   const t = ticketValue(l)
-  return t == null ? 0 : (t * chargePct(l)) / 100
+  return t == null ? 0 : (t * chargePct(l, projectDefault)) / 100
 }
 
 // One flat record for CSV export — used by both the Upload page (all leads) and
 // the Leads page (current filtered/drilled subset), so the columns stay identical.
-export function leadExportRow(l: Lead, rule: HighTicketRule): Record<string, unknown> {
+export function leadExportRow(l: Lead, rule: HighTicketRule, chargeDefault: number = DEFAULT_CHARGE_PCT): Record<string, unknown> {
   return {
-    'Record Id': l.record_id, Name: displayName(l), Email: l.email, Phone: l.phone, Practice: l.practice,
+    // The bare id, so an export round-trips against the source CRM rather than
+    // carrying the internal project namespace.
+    'Record Id': bareRecordId(l.record_id),
+    Name: displayName(l), Email: l.email, Phone: l.phone, Practice: l.practice,
     Specialty: l.specialty, Physicians: l.physicians, Source: l.source, Status: l.status, Stage: l.stage,
     'Created PK': fmtInZone(l.created_utc, PK_ZONE), 'Created US': fmtInZone(l.created_utc, SRC_ZONE),
     'Monthly Collections (CRM)': l.monthly_collections, 'Ticket $/mo': ticketValue(l),
-    'Charge %': chargePct(l), 'Revenue $/mo': Math.round(leadRevenue(l)),
+    'Charge %': chargePct(l, chargeDefault), 'Revenue $/mo': Math.round(leadRevenue(l, chargeDefault)),
     'Revenue Month': l.manual_revenue_month || monthKeyOf(l.created_utc).key,
     'High Ticket': isHigh(l, rule) ? 'Yes' : 'No', Notes: effectiveNotes(l),
     'Source/Medium': l.manual_source_medium, 'First Landing Page': l.manual_first_landing ?? l.first_page,

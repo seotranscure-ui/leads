@@ -1,13 +1,14 @@
 import { Fragment, useMemo, useReducer, useRef, useState, type MouseEvent as RMouseEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAppData } from '../data/AppData'
-import { FUNNEL_ORDER } from '../lib/funnel'
 import { chargePct, displayName, effectiveNotes, fmtMoney, isHigh, leadExportRow, leadRevenue, num, ticketValue, type Lead } from '../lib/leads'
 import { downloadCSV } from '../lib/csv'
 import { fmtInZone, PK_ZONE, SRC_ZONE } from '../lib/time'
 import MultiSelect from './MultiSelect'
 import AddLead from './AddLead'
+import StageChip from './StageChip'
 import { nextPending, isOverdue, isDueToday } from '../lib/followups'
+import { stageNames } from '../lib/projects'
 import { monthKey } from '../lib/stats'
 
 const COLS = [
@@ -31,7 +32,7 @@ function loadLayout(): Layout {
 }
 
 export default function LeadsPage() {
-  const { leads, rule, updateManual, removeLead, drill, setDrill, sequences, steps } = useAppData()
+  const { leads, rule, updateManual, removeLead, drill, setDrill, sequences, steps, project, funnel } = useAppData()
   const nav = useNavigate()
   const [q, setQ] = useState('')
   const [dateFrom, setDateFrom] = useState('')
@@ -139,7 +140,7 @@ export default function LeadsPage() {
     if (!rows.length) return
     const tag = drill ? drill.label : activeCount ? 'filtered' : 'all'
     const slug = tag.replace(/[^a-z0-9]+/gi, '_').replace(/^_+|_+$/g, '').toLowerCase() || 'leads'
-    downloadCSV(`transcure_leads_${slug}.csv`, rows.map((l) => leadExportRow(l, rule)))
+    downloadCSV(`${project.id}_leads_${slug}.csv`, rows.map((l) => leadExportRow(l, rule, project.default_charge_pct)))
   }
   const pick = (set: (v: string[]) => void) => (v: string[]) => clearDropdownsAndDrill(() => set(v))
 
@@ -159,7 +160,7 @@ export default function LeadsPage() {
         <span className="datef small muted">From <input type="date" value={dateFrom} onChange={(e) => clearDropdownsAndDrill(() => setDateFrom(e.target.value))} /></span>
         <span className="datef small muted">To <input type="date" value={dateTo} onChange={(e) => clearDropdownsAndDrill(() => setDateTo(e.target.value))} /></span>
         <MultiSelect label="Source" options={sources} selected={fSource} onChange={pick(setFSource)} />
-        <MultiSelect label="Stage" options={[...FUNNEL_ORDER]} selected={fStage} onChange={pick(setFStage)} />
+        <MultiSelect label="Stage" options={stageNames(funnel)} selected={fStage} onChange={pick(setFStage)} />
         <MultiSelect label="Status" options={statuses} selected={fStatus} onChange={pick(setFStatus)} />
         <MultiSelect label="Specialty" options={specialties} selected={fSpecialty} onChange={pick(setFSpecialty)} />
         <MultiSelect label="Size" options={physiciansOpts} selected={fPhysicians} onChange={pick(setFPhysicians)} />
@@ -208,7 +209,7 @@ export default function LeadsPage() {
                   <td>{l.physicians}</td>
                   <td>{l.source}</td>
                   <td>{l.status}</td>
-                  <td><span className={'chip stage-' + l.stage}>{l.stage}</span></td>
+                  <td><StageChip stage={l.stage} /></td>
                   <td className="timecell">{fmtInZone(l.created_utc, PK_ZONE) || '—'}<div className="us">{fmtInZone(l.created_utc, SRC_ZONE)} US</div></td>
                   <td>
                     <input className="cell" type="text" defaultValue={l.manual_ticket != null ? String(l.manual_ticket) : ''}
@@ -243,8 +244,8 @@ export default function LeadsPage() {
                           <label>Recording (Hotjar) link
                             <input type="url" defaultValue={l.manual_recording ?? ''} placeholder="https://insights.hotjar.com/…"
                               onBlur={(e) => updateManual(l.record_id, { manual_recording: orNull(e.target.value) })} /></label>
-                          <label>Charge % (default 5)
-                            <input type="number" step="0.1" min="0" defaultValue={l.manual_charge_pct ?? ''} placeholder="5"
+                          <label>Charge % (default {project.default_charge_pct})
+                            <input type="number" step="0.1" min="0" defaultValue={l.manual_charge_pct ?? ''} placeholder={String(project.default_charge_pct)}
                               onBlur={(e) => updateManual(l.record_id, { manual_charge_pct: e.target.value.trim() === '' ? null : num(e.target.value) })} /></label>
                           <label>Revenue month (default {monthKey(l)})
                             <input type="month" defaultValue={l.manual_revenue_month ?? ''}
@@ -255,7 +256,7 @@ export default function LeadsPage() {
                         </div>
                         <div className="detail-ref small muted">
                           CRM First Page Visited: <b>{l.first_page || '—'}</b> · Referrer: <b>{l.referrer || '—'}</b>
-                          {ticketValue(l) != null && <> · Revenue @ {chargePct(l)}%: <b>{fmtMoney(leadRevenue(l))}</b></>}
+                          {ticketValue(l) != null && <> · Revenue @ {chargePct(l, project.default_charge_pct)}%: <b>{fmtMoney(leadRevenue(l, project.default_charge_pct))}</b></>}
                           {l.manual_recording && <> · <a href={l.manual_recording} target="_blank" rel="noreferrer">open recording ↗</a></>}
                         </div>
                         <div className="detail-foot" style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>

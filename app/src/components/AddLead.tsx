@@ -1,19 +1,24 @@
-import { useState, type ChangeEvent, type FormEvent } from 'react'
+import { useMemo, useState, type ChangeEvent, type FormEvent } from 'react'
 import { useAppData } from '../data/AppData'
-import { stageFor } from '../lib/funnel'
 import { num, type Lead } from '../lib/leads'
+import { scopedRecordId, stageForIn } from '../lib/projects'
 
-const STATUS_SUGGESTIONS = ['Attempted to Contact', 'Contacted', 'Follow Up', 'Contact in Future', 'Demo Scheduled', 'Demo Completed', 'Under Audit', 'Agreement Sent', 'Won Lead', 'Lost Lead', 'Not-Qualified', 'Junk Lead']
-
-const EMPTY = { name: '', email: '', phone: '', practice: '', specialty: '', physicians: '', source: 'SEO', status: 'Attempted to Contact', monthly: '', date: '' }
+const EMPTY = { name: '', email: '', phone: '', practice: '', specialty: '', physicians: '', source: 'SEO', status: '', monthly: '', date: '' }
 
 export default function AddLead() {
-  const { addLead } = useAppData()
+  const { addLead, project, funnel } = useAppData()
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [f, setF] = useState({ ...EMPTY })
   const set = (k: keyof typeof EMPTY) => (e: ChangeEvent<HTMLInputElement>) => setF((s) => ({ ...s, [k]: e.target.value }))
+
+  // Suggest the statuses this project's own funnel actually recognises, rather
+  // than a fixed Zoho list that may not apply to it.
+  const statusSuggestions = useMemo(
+    () => funnel.stages.flatMap((s) => s.statuses).map((s) => s.replace(/\b\w/g, (c) => c.toUpperCase())),
+    [funnel],
+  )
 
   const close = () => { if (!busy) { setOpen(false); setErr(null) } }
 
@@ -24,11 +29,13 @@ export default function AddLead() {
     try {
       const created = (f.date ? new Date(f.date + 'T12:00:00Z') : new Date()).toISOString()
       const lead: Lead = {
-        record_id: 'manual-' + crypto.randomUUID(),
+        // Namespaced like an import, so manual leads cannot collide across projects.
+        record_id: scopedRecordId(project, 'manual-' + crypto.randomUUID()),
+        project_id: project.id,
         lead_owner: null, company: f.practice.trim() || null,
         first_name: null, last_name: null, lead_name: f.name.trim(),
         email: f.email.trim() || null, phone: f.phone.trim() || null,
-        source: f.source.trim() || '(blank)', status: f.status.trim(), stage: stageFor(f.status),
+        source: f.source.trim() || '(blank)', status: f.status.trim(), stage: stageForIn(funnel, f.status),
         tag: null, specialty: f.specialty.trim() || null, practice: f.practice.trim() || null,
         physicians: f.physicians.trim() || null, monthly_collections: num(f.monthly),
         first_page: null, referrer: null, message: null, comments: null, phase: null,
@@ -62,7 +69,7 @@ export default function AddLead() {
               <label>Specialty<input value={f.specialty} onChange={set('specialty')} /></label>
               <label>Physicians<input value={f.physicians} onChange={set('physicians')} placeholder="e.g. 2-5" /></label>
               <label>Source<input value={f.source} onChange={set('source')} /></label>
-              <label>Status<input list="status-suggest" value={f.status} onChange={set('status')} /><datalist id="status-suggest">{STATUS_SUGGESTIONS.map((s) => <option key={s} value={s} />)}</datalist></label>
+              <label>Status<input list="status-suggest" value={f.status} onChange={set('status')} placeholder={statusSuggestions[0] ?? ''} /><datalist id="status-suggest">{statusSuggestions.map((s) => <option key={s} value={s} />)}</datalist></label>
               <label>Monthly collections $<input type="number" value={f.monthly} onChange={set('monthly')} /></label>
               <label>Created date<input type="date" value={f.date} onChange={set('date')} /></label>
             </div>

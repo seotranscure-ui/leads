@@ -1,12 +1,12 @@
 import { useMemo, useState } from 'react'
 import { useAppData } from '../data/AppData'
-import { FUNNEL_ORDER, STAGE_COLOR, isDemo, isWon, type Stage } from '../lib/funnel'
+import { isDemoIn, isWonIn } from '../lib/projects'
 import { isHigh, type Lead } from '../lib/leads'
 import { monthlyStats, pct, monthKey } from '../lib/stats'
 import { PK_ZONE } from '../lib/time'
 
 export default function Funnel() {
-  const { leads, rule } = useAppData()
+  const { leads, rule, project, funnel } = useAppData()
   const [fMonth, setFMonth] = useState('')
   const [fSource, setFSource] = useState('')
 
@@ -20,17 +20,19 @@ export default function Funnel() {
   const ff = (l: Lead) => (!fMonth || monthKey(l) === fMonth) && (!fSource || l.source === fSource)
   const all = leads.filter(ff)
 
-  const counts: Record<Stage, number> = { Lead: 0, Engaged: 0, Demo: 0, Audit: 0, Negotiation: 0, Won: 0, Lost: 0 }
-  all.forEach((l) => { counts[l.stage as Stage] = (counts[l.stage as Stage] || 0) + 1 })
+  // Stage list, order and colours all come from this project's funnel config.
+  const counts: Record<string, number> = {}
+  funnel.stages.forEach((st) => { counts[st.name] = 0 })
+  all.forEach((l) => { counts[l.stage] = (counts[l.stage] ?? 0) + 1 })
   const max = Math.max(1, ...Object.values(counts))
-  const demos = all.filter((l) => isDemo(l.stage)).length
-  const sales = all.filter((l) => isWon(l.stage)).length
+  const demos = all.filter((l) => isDemoIn(funnel, l.stage)).length
+  const sales = all.filter((l) => isWonIn(funnel, l.stage)).length
   const ht = all.filter((l) => isHigh(l, rule)).length
 
   const pg: Record<string, number> = {}
   all.forEach((l) => { const p = (l.first_page || '(unknown)').replace(/^https?:\/\/[^/]+/, '') || '/'; pg[p] = (pg[p] || 0) + 1 })
   const top = Object.entries(pg).sort((a, b) => b[1] - a[1]).slice(0, 10)
-  const monthly = monthlyStats(leads, rule, { createdIn: ff, wonIn: ff })
+  const monthly = monthlyStats(leads, rule, { createdIn: ff, wonIn: ff, funnel, chargePct: project.default_charge_pct })
 
   return (
     <>
@@ -48,15 +50,19 @@ export default function Funnel() {
       <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', alignItems: 'start' }}>
         <div className="card">
           <h2 className="section">Funnel stages</h2>
-          {FUNNEL_ORDER.map((s) => (
-            <div className="funnelbar" key={s}>
-              <div className="name">{s}</div>
+          {funnel.stages.map((st) => (
+            <div className="funnelbar" key={st.name}>
+              <div className="name">{st.name}</div>
               <div className="track">
-                <div className="bar" style={{ width: (counts[s] / max) * 100 + '%', background: STAGE_COLOR[s] }}>{counts[s]}</div>
+                <div className="bar" style={{ width: ((counts[st.name] ?? 0) / max) * 100 + '%', background: st.color }}>{counts[st.name] ?? 0}</div>
               </div>
             </div>
           ))}
-          <p className="small muted" style={{ marginTop: 10 }}>A lead counts as a <b>Demo</b> if its current stage is Demo, Audit, Negotiation or Won. Lost leads are excluded from demo counts.</p>
+          <p className="small muted" style={{ marginTop: 10 }}>
+            A lead counts as a <b>Demo</b> once it reaches{' '}
+            <b>{funnel.stages.filter((s) => s.reachedDemo).map((s) => s.name).join(', ') || '—'}</b>.
+            Stages are configured per workspace in <b>Admin</b>.
+          </p>
         </div>
         <div className="card">
           <h2 className="section">Conversion ratios</h2>

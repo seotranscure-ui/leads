@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import { useAuth } from '../auth/AuthProvider'
 import { useAppData } from '../data/AppData'
@@ -7,7 +7,20 @@ import Logo from './Logo'
 
 export default function Layout() {
   const { user, signOut } = useAuth()
-  const { leads, logoUrl, sequences, steps } = useAppData()
+  const { leads, logoUrl, sequences, steps, projects, project, setProjectId } = useAppData()
+
+  // Workspace switcher. Only rendered when there is more than one project, so a
+  // single-project install looks exactly as it did before.
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const pickerRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!pickerOpen) return
+    const onDown = (e: MouseEvent) => {
+      if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) setPickerOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [pickerOpen])
 
   const dueCount = useMemo(() =>
     steps.filter((s) => {
@@ -21,7 +34,34 @@ export default function Layout() {
     <>
       <header className="app">
         <Logo src={logoUrl} />
-        <span className="subtitle">SEO Lead Tracker</span>
+        {projects.length > 1 ? (
+          <div className="ws" ref={pickerRef}>
+            <button className="ws-btn" onClick={() => setPickerOpen((o) => !o)} title="Switch workspace">
+              <span className="ws-name">{project.name}</span>
+              <span className="ws-caret">▾</span>
+            </button>
+            {pickerOpen && (
+              <div className="ws-pop">
+                <div className="ws-head">Workspace</div>
+                {projects.map((p) => (
+                  <button
+                    key={p.id}
+                    className={'ws-opt' + (p.id === project.id ? ' active' : '')}
+                    onClick={() => { setProjectId(p.id); setPickerOpen(false) }}
+                  >
+                    <span>{p.name}</span>
+                    {p.id === project.id && <span className="ws-tick">✓</span>}
+                  </button>
+                ))}
+                <div className="ws-note">
+                  Leads, funnel stages, reminders and settings are kept separate per workspace.
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <span className="subtitle">SEO Lead Tracker</span>
+        )}
         <span className="pill">{leads.length} leads</span>
         <nav className="tabs">
           <NavLink to="/" end>Dashboard</NavLink>

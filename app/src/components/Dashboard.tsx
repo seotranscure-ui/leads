@@ -1,14 +1,19 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAppData, type Drill } from '../data/AppData'
-import { isDemo, isWon } from '../lib/funnel'
 import { isHigh, leadRevenue, ruleLabel, ticketValue, fmtMoney, type Lead } from '../lib/leads'
+import { isDemoIn, isWonIn } from '../lib/projects'
 import { monthlyStats, pct, specKey, monthKey, revenueMonthKey } from '../lib/stats'
 import { fmtInZone, PK_ZONE } from '../lib/time'
 import { isOverdue, isDueToday } from '../lib/followups'
 
 export default function Dashboard() {
-  const { leads, rule, setDrill, loading, error, sequences, steps } = useAppData()
+  const { leads, rule, setDrill, loading, error, sequences, steps, project, funnel } = useAppData()
+  // All demo/won tests and revenue go through this project's own funnel and
+  // charge rate, so a second workspace with different stages reports correctly.
+  const charge = project.default_charge_pct
+  const isDemo = (stage: string) => isDemoIn(funnel, stage)
+  const isWon = (stage: string) => isWonIn(funnel, stage)
   const nav = useNavigate()
 
   // Period filter. Lead-intake metrics scope by created date (day granularity);
@@ -54,25 +59,25 @@ export default function Dashboard() {
     const seo = createdSet.filter((l) => l.source.toLowerCase() === 'seo').length
     const ht = createdSet.filter((l) => isHigh(l, rule)).length
     const wonMonthly = wonSet.reduce((s, l) => s + (ticketValue(l) || 0), 0)
-    const revenueWon = wonSet.reduce((s, l) => s + leadRevenue(l), 0)
-    const lostRevenue = createdSet.filter((l) => !isWon(l.stage) && ticketValue(l) != null).reduce((s, l) => s + leadRevenue(l), 0)
-    const months = monthlyStats(leads, rule, { createdIn, wonIn: revIn })
+    const revenueWon = wonSet.reduce((s, l) => s + leadRevenue(l, charge), 0)
+    const lostRevenue = createdSet.filter((l) => !isWon(l.stage) && ticketValue(l) != null).reduce((s, l) => s + leadRevenue(l, charge), 0)
+    const months = monthlyStats(leads, rule, { createdIn, wonIn: revIn, funnel, chargePct: charge })
     const bySrc: Record<string, number> = {}
     createdSet.forEach((l) => { bySrc[l.source] = (bySrc[l.source] || 0) + 1 })
     const bySrcSales: Record<string, { sales: number; coll: number; rev: number }> = {}
     wonSet.forEach((l) => {
       if (!bySrcSales[l.source]) bySrcSales[l.source] = { sales: 0, coll: 0, rev: 0 }
-      const g = bySrcSales[l.source]; g.sales++; g.coll += ticketValue(l) || 0; g.rev += leadRevenue(l)
+      const g = bySrcSales[l.source]; g.sales++; g.coll += ticketValue(l) || 0; g.rev += leadRevenue(l, charge)
     })
     const sp: Record<string, { leads: number; demos: number; sales: number; ht: number; coll: number; rev: number }> = {}
     const ensureSp = (k: string) => { if (!sp[k]) sp[k] = { leads: 0, demos: 0, sales: 0, ht: 0, coll: 0, rev: 0 }; return sp[k] }
     createdSet.forEach((l) => { const g = ensureSp(specKey(l)); g.leads++; if (isDemo(l.stage)) g.demos++; if (isHigh(l, rule)) g.ht++ })
-    wonSet.forEach((l) => { const g = ensureSp(specKey(l)); g.sales++; g.coll += ticketValue(l) || 0; g.rev += leadRevenue(l) })
+    wonSet.forEach((l) => { const g = ensureSp(specKey(l)); g.sales++; g.coll += ticketValue(l) || 0; g.rev += leadRevenue(l, charge) })
     return { totalLeads: createdSet.length, demos, wons: wonSet.length, ht, seo, wonMonthly, revenueWon, lostRevenue, months,
       srcRows: Object.entries(bySrc).sort((a, b) => b[1] - a[1]),
       srcSalesRows: Object.entries(bySrcSales).sort((a, b) => b[1].sales - a[1].sales),
       spRows: Object.entries(sp).sort((a, b) => b[1].leads - a[1].leads) }
-  }, [leads, rule, from, to])
+  }, [leads, rule, from, to, funnel, charge])
 
   // Must run on every render, before any early return below — a hook called
   // conditionally (e.g. only once loading/error/empty have passed) makes this

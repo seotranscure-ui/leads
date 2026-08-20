@@ -15,15 +15,15 @@ function errMsg(e: unknown): string {
 }
 
 export default function Upload() {
-  const { leads, rule, refresh } = useAppData()
+  const { leads, rule, refresh, project } = useAppData()
   const fileRef = useRef<HTMLInputElement>(null)
   const [drag, setDrag] = useState(false)
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
   const [batches, setBatches] = useState<ImportBatch[]>([])
 
-  const loadBatches = () => fetchImportBatches().then(setBatches).catch(() => {})
-  useEffect(() => { loadBatches() }, [])
+  const loadBatches = () => fetchImportBatches(project.id).then(setBatches).catch(() => {})
+  useEffect(() => { loadBatches() }, [project.id])
 
   const handleFile = (f: File) => {
     setBusy(true)
@@ -37,11 +37,13 @@ export default function Upload() {
           setBusy(false)
           return
         }
-        const crm = objs.map(csvRowToLead).filter((r) => r.record_id)
-        const res = await importLeads(crm, f.name)
+        // Mapped against THIS project's funnel, and with record_ids namespaced to
+        // it, so an upload can never overwrite another workspace's leads.
+        const crm = objs.map((o) => csvRowToLead(o, project)).filter((r) => r.record_id)
+        const res = await importLeads(crm, f.name, project.id)
         await refresh()
         await loadBatches()
-        setMsg({ kind: 'ok', text: `Imported ${res.total} rows · ${res.inserted} new · ${res.updated} updated.` })
+        setMsg({ kind: 'ok', text: `Imported ${res.total} rows into ${project.name} · ${res.inserted} new · ${res.updated} updated.` })
       } catch (err) {
         setMsg({ kind: 'err', text: errMsg(err) })
       } finally {
@@ -69,7 +71,7 @@ export default function Upload() {
 
   const exportEnriched = () => {
     if (!leads.length) return
-    downloadCSV('transcure_enriched_leads.csv', leads.map((l) => leadExportRow(l, rule)))
+    downloadCSV(`${project.id}_enriched_leads.csv`, leads.map((l) => leadExportRow(l, rule, project.default_charge_pct)))
   }
 
   return (

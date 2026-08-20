@@ -1,15 +1,35 @@
 import { supabase } from './supabase'
 import { DEFAULT_RULE, type CrmLead, type HighTicketRule, type Lead, type ManualPatch } from './leads'
 import type { FollowUpSequence, FollowUpStep } from './followups'
+import { DEFAULT_PROJECT_ID, FALLBACK_PROJECT, type Project } from './projects'
 
-// Fetch all leads (paged past PostgREST's 1000-row default cap).
-export async function fetchLeads(): Promise<Lead[]> {
+// ── projects (workspaces) ────────────────────────────────────────────────────
+
+/**
+ * Every project, ordered for the switcher. Falls back to a single synthetic
+ * project if migration 006 has not been applied, so the app still runs rather
+ * than showing a blank screen against an older database.
+ */
+export async function fetchProjects(): Promise<Project[]> {
+  const { data, error } = await supabase.from('projects').select('*').order('sort_order')
+  if (error || !data?.length) return [FALLBACK_PROJECT]
+  return data as Project[]
+}
+
+export async function saveProject(id: string, patch: Partial<Project>): Promise<void> {
+  const { error } = await supabase.from('projects').update(patch).eq('id', id)
+  if (error) throw error
+}
+
+// Fetch all leads for one project (paged past PostgREST's 1000-row default cap).
+export async function fetchLeads(projectId: string = DEFAULT_PROJECT_ID): Promise<Lead[]> {
   const all: Lead[] = []
   const size = 1000
   for (let from = 0; ; from += size) {
     const { data, error } = await supabase
       .from('leads')
       .select('*')
+      .eq('project_id', projectId)
       .order('created_utc', { ascending: false, nullsFirst: false })
       .range(from, from + size - 1)
     if (error) throw error
@@ -31,7 +51,9 @@ const BLANK_MANUAL: Partial<Lead> = {
 // Upsert CRM rows by record_id. To guarantee an import NEVER wipes manually-entered
 // data, we first read back each existing lead's manual_* fields and merge them into
 // the payload — so the import refreshes CRM columns while re-writing manual data unchanged.
-export async function importLeads(rows: CrmLead[], fileName: string): Promise<ImportResult> {
+export async function importLeads(rows: CrmLead[], fileName: string, projectId: string = DEFAULT_PROJECT_ID): Promise<ImportResult> {
+  // record_ids arrive already namespaced for the project (see scopedRecordId),
+  // so the existence check below cannot mistake another project's lead for this one.
   const ids = rows.map((r) => r.record_id).filter(Boolean)
   const manualById = new Map<string, Partial<Lead>>()
   for (let i = 0; i < ids.length; i += 1000) {
@@ -44,7 +66,7 @@ export async function importLeads(rows: CrmLead[], fileName: string): Promise<Im
   const updated = ids.length - inserted
 
   // CRM columns come from the file; manual columns are preserved (existing) or null (new lead).
-  const merged = rows.map((r) => ({ ...r, ...BLANK_MANUAL, ...(manualById.get(r.record_id) ?? {}) }))
+  const merged = rows.map((r) => ({ ...r, project_id: projectId, ...BLANK_MANUAL, ...(manualById.get(r.record_id) ?? {}) }))
 
   for (let i = 0; i < merged.length; i += 500) {
     const chunk = merged.slice(i, i + 500)
@@ -59,6 +81,7 @@ export async function importLeads(rows: CrmLead[], fileName: string): Promise<Im
     rows_total: rows.length,
     rows_inserted: inserted,
     rows_updated: updated,
+    project_id: projectId,
   }
   // History logging is best-effort — it must never fail the actual import.
   // If the `rows` column hasn't been migrated yet, fall back to logging without it.
@@ -79,11 +102,12 @@ export interface ImportBatch {
   rows_updated: number | null
 }
 
-// Import history (lightweight — excludes the heavy rows payload).
-export async function fetchImportBatches(): Promise<ImportBatch[]> {
+// Import history for one project (lightweight — excludes the heavy rows payload).
+export async function fetchImportBatches(projectId: string = DEFAULT_PROJECT_ID): Promise<ImportBatch[]> {
   const { data, error } = await supabase
     .from('import_batches')
     .select('id, file_name, uploaded_at, rows_total, rows_inserted, rows_updated')
+    .eq('project_id', projectId)
     .order('uploaded_at', { ascending: false })
     .limit(100)
   if (error) throw error
@@ -92,11 +116,12 @@ export async function fetchImportBatches(): Promise<ImportBatch[]> {
 
 // Re-apply a previous import: re-upsert its stored rows (manual_* fields stay intact).
 export async function reapplyBatch(id: string): Promise<ImportResult> {
-  const { data, error } = await supabase.from('import_batches').select('file_name, rows').eq('id', id).single()
+  const { data, error } = await supabase.from('import_batches').select('file_name, rows, project_id').eq('id', id).single()
   if (error) throw error
   const rows = (data?.rows ?? []) as CrmLead[]
   if (!rows.length) throw new Error('This import has no stored rows to re-apply (it predates version history).')
-  return importLeads(rows, `Re-applied: ${data?.file_name ?? 'import'}`)
+  // Re-apply into the project the batch came from, not whichever is selected now.
+  return importLeads(rows, `Re-applied: ${data?.file_name ?? 'import'}`, (data?.project_id as string) ?? DEFAULT_PROJECT_ID)
 }
 
 // Save the manual enrichment fields for one lead (never overwritten by import).
@@ -149,33 +174,42 @@ export async function setLogo(dataUrl: string | null): Promise<void> {
 
 // ── Follow-up sequences ──────────────────────────────────────────────────────
 
-export async function fetchSequences(): Promise<FollowUpSequence[]> {
+export async function fetchSequences(projectId: string = DEFAULT_PROJECT_ID): Promise<FollowUpSequence[]> {
   const { data, error } = await supabase
     .from('follow_up_sequences')
     .select('*')
+    .eq('project_id', projectId)
     .order('created_at', { ascending: false })
   if (error) throw error
   return (data ?? []) as FollowUpSequence[]
 }
 
-export async function fetchAllSteps(): Promise<FollowUpStep[]> {
-  const { data, error } = await supabase
-    .from('follow_up_steps')
-    .select('*')
-    .order('step_number')
-  if (error) throw error
-  return (data ?? []) as FollowUpStep[]
+// Steps carry no project column of their own; they are scoped via their sequence.
+export async function fetchStepsFor(sequenceIds: string[]): Promise<FollowUpStep[]> {
+  if (!sequenceIds.length) return []
+  const all: FollowUpStep[] = []
+  for (let i = 0; i < sequenceIds.length; i += 500) {
+    const { data, error } = await supabase
+      .from('follow_up_steps')
+      .select('*')
+      .in('sequence_id', sequenceIds.slice(i, i + 500))
+      .order('step_number')
+    if (error) throw error
+    all.push(...((data ?? []) as FollowUpStep[]))
+  }
+  return all
 }
 
 export async function createSequence(
   leadRecordId: string,
   managerEmail: string | null,
   steps: { scheduled_date: string; channels: string[] }[],
+  projectId: string = DEFAULT_PROJECT_ID,
 ): Promise<FollowUpSequence> {
   const { data: u } = await supabase.auth.getUser()
   const { data: seq, error: se } = await supabase
     .from('follow_up_sequences')
-    .insert({ lead_record_id: leadRecordId, manager_email: managerEmail, started_by: u?.user?.id ?? null })
+    .insert({ lead_record_id: leadRecordId, manager_email: managerEmail, started_by: u?.user?.id ?? null, project_id: projectId })
     .select()
     .single()
   if (se) throw se
@@ -196,6 +230,7 @@ export async function createSequence(
 export async function provisionSequences(
   leadIds: string[],
   stepsFor: (leadId: string) => { scheduled_date: string; channels: string[] }[],
+  projectId: string = DEFAULT_PROJECT_ID,
 ): Promise<number> {
   if (!leadIds.length) return 0
   const { data: u } = await supabase.auth.getUser()
@@ -206,7 +241,7 @@ export async function provisionSequences(
   const { data: created, error: se } = await supabase
     .from('follow_up_sequences')
     .upsert(
-      leadIds.map((id) => ({ lead_record_id: id, manager_email: null, started_by: uid })),
+      leadIds.map((id) => ({ lead_record_id: id, manager_email: null, started_by: uid, project_id: projectId })),
       { onConflict: 'lead_record_id', ignoreDuplicates: true },
     )
     .select()

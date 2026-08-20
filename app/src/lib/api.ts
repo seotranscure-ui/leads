@@ -51,18 +51,35 @@ export async function remapStages(projectId: string, stageOf: (status: string | 
   return changed
 }
 
+/** True when a PostgREST error is "that column does not exist". */
+const isMissingColumn = (e: { message?: string; code?: string } | null): boolean =>
+  !!e && (e.code === '42703' || /column .* does not exist|does not exist on/i.test(e.message ?? ''))
+
 // Fetch all leads for one project (paged past PostgREST's 1000-row default cap).
+//
+// Tolerates the project_id column being absent, so the app still works if this
+// code reaches production before migration 006 is applied — otherwise every lead
+// query would fail and the tool would look empty. Once migrated, the filter
+// applies normally.
 export async function fetchLeads(projectId: string = DEFAULT_PROJECT_ID): Promise<Lead[]> {
   const all: Lead[] = []
   const size = 1000
+  let scoped = true
   for (let from = 0; ; from += size) {
-    const { data, error } = await supabase
-      .from('leads')
-      .select('*')
-      .eq('project_id', projectId)
+    let q = supabase.from('leads').select('*')
+    if (scoped) q = q.eq('project_id', projectId)
+    const { data, error } = await q
       .order('created_utc', { ascending: false, nullsFirst: false })
       .range(from, from + size - 1)
-    if (error) throw error
+    if (error) {
+      if (scoped && isMissingColumn(error)) {
+        // Pre-migration database: retry unscoped from the top.
+        scoped = false
+        from = -size
+        continue
+      }
+      throw error
+    }
     all.push(...(data as Lead[]))
     if (!data || data.length < size) break
   }
@@ -134,14 +151,19 @@ export interface ImportBatch {
 
 // Import history for one project (lightweight — excludes the heavy rows payload).
 export async function fetchImportBatches(projectId: string = DEFAULT_PROJECT_ID): Promise<ImportBatch[]> {
+  const cols = 'id, file_name, uploaded_at, rows_total, rows_inserted, rows_updated'
   const { data, error } = await supabase
-    .from('import_batches')
-    .select('id, file_name, uploaded_at, rows_total, rows_inserted, rows_updated')
+    .from('import_batches').select(cols)
     .eq('project_id', projectId)
-    .order('uploaded_at', { ascending: false })
-    .limit(100)
-  if (error) throw error
-  return (data ?? []) as ImportBatch[]
+    .order('uploaded_at', { ascending: false }).limit(100)
+  if (!error) return (data ?? []) as ImportBatch[]
+  if (!isMissingColumn(error)) throw error
+  // Pre-migration: no project column to filter on.
+  const { data: d2, error: e2 } = await supabase
+    .from('import_batches').select(cols)
+    .order('uploaded_at', { ascending: false }).limit(100)
+  if (e2) throw e2
+  return (d2 ?? []) as ImportBatch[]
 }
 
 // Re-apply a previous import: re-upsert its stored rows (manual_* fields stay intact).
@@ -206,12 +228,17 @@ export async function setLogo(dataUrl: string | null): Promise<void> {
 
 export async function fetchSequences(projectId: string = DEFAULT_PROJECT_ID): Promise<FollowUpSequence[]> {
   const { data, error } = await supabase
-    .from('follow_up_sequences')
-    .select('*')
+    .from('follow_up_sequences').select('*')
     .eq('project_id', projectId)
     .order('created_at', { ascending: false })
-  if (error) throw error
-  return (data ?? []) as FollowUpSequence[]
+  if (!error) return (data ?? []) as FollowUpSequence[]
+  if (!isMissingColumn(error)) throw error
+  // Pre-migration: no project column to filter on.
+  const { data: d2, error: e2 } = await supabase
+    .from('follow_up_sequences').select('*')
+    .order('created_at', { ascending: false })
+  if (e2) throw e2
+  return (d2 ?? []) as FollowUpSequence[]
 }
 
 // Steps carry no project column of their own; they are scoped via their sequence.

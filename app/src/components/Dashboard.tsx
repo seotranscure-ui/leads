@@ -12,7 +12,7 @@ export default function Dashboard() {
   // All demo/won tests and revenue go through this project's own funnel and
   // charge rate, so a second workspace with different stages reports correctly.
   const charge = project.default_charge_pct
-  const isDemo = (stage: string) => isDemoIn(funnel, stage)
+  const isDemo = (l: Lead) => isDemoIn(funnel, l.stage, l.status)
   const isWon = (stage: string) => isWonIn(funnel, stage)
   const nav = useNavigate()
 
@@ -55,7 +55,7 @@ export default function Dashboard() {
   const stats = useMemo(() => {
     const createdSet = leads.filter(createdIn)                              // lead-intake basis (created date)
     const wonSet = leads.filter((l) => isWon(l.stage) && revIn(l))          // won money basis (revenue month)
-    const demos = createdSet.filter((l) => isDemo(l.stage)).length
+    const demos = createdSet.filter((l) => isDemo(l)).length
     const seo = createdSet.filter((l) => l.source.toLowerCase() === 'seo').length
     const ht = createdSet.filter((l) => isHigh(l, rule)).length
     const wonMonthly = wonSet.reduce((s, l) => s + (ticketValue(l) || 0), 0)
@@ -71,7 +71,7 @@ export default function Dashboard() {
     })
     const sp: Record<string, { leads: number; demos: number; sales: number; ht: number; coll: number; rev: number }> = {}
     const ensureSp = (k: string) => { if (!sp[k]) sp[k] = { leads: 0, demos: 0, sales: 0, ht: 0, coll: 0, rev: 0 }; return sp[k] }
-    createdSet.forEach((l) => { const g = ensureSp(specKey(l)); g.leads++; if (isDemo(l.stage)) g.demos++; if (isHigh(l, rule)) g.ht++ })
+    createdSet.forEach((l) => { const g = ensureSp(specKey(l)); g.leads++; if (isDemo(l)) g.demos++; if (isHigh(l, rule)) g.ht++ })
     wonSet.forEach((l) => { const g = ensureSp(specKey(l)); g.sales++; g.coll += ticketValue(l) || 0; g.rev += leadRevenue(l, charge) })
     return { totalLeads: createdSet.length, demos, wons: wonSet.length, ht, seo, wonMonthly, revenueWon, lostRevenue, months,
       srcRows: Object.entries(bySrc).sort((a, b) => b[1] - a[1]),
@@ -109,7 +109,7 @@ export default function Dashboard() {
   const kpis: [string, string | number, string, () => void][] = [
     ['Total leads', totalLeads, 'came in this period', () => go('Leads in period', (l) => createdIn(l))],
     ['SEO leads', seo, pct(seo, totalLeads) + ' of leads', () => go('SEO leads in period', (l) => createdIn(l) && isSeo(l))],
-    ['Demos', demos, pct(demos, totalLeads) + ' of leads', () => go('Demos (reached demo+)', (l) => createdIn(l) && isDemo(l.stage))],
+    ['Demos', demos, pct(demos, totalLeads) + ' of leads', () => go('Demos (reached demo+)', (l) => createdIn(l) && isDemo(l))],
     ['Sales (Won)', wons, pct(wons, demos) + ' of demos', () => go('Sales — Won (this period)', (l) => isWon(l.stage) && revIn(l))],
     ['Won collections /mo', fmtMoney(wonMonthly), 'recognized this period', () => go('Won leads (this period)', (l) => isWon(l.stage) && revIn(l))],
     ['Revenue /mo (won)', fmtMoney(revenueWon), 'our charge % of won collections', () => go('Won leads (this period)', (l) => isWon(l.stage) && revIn(l))],
@@ -161,7 +161,7 @@ export default function Dashboard() {
                 <tr key={m.key}>
                   <td>{m.label}</td>
                   <td className="right link" onClick={() => go('Leads · ' + m.label, (l) => createdIn(l) && monthKey(l) === m.key)}>{m.leads}</td>
-                  <td className="right link" onClick={() => go('Demos · ' + m.label, (l) => createdIn(l) && monthKey(l) === m.key && isDemo(l.stage))}>{m.demos}</td>
+                  <td className="right link" onClick={() => go('Demos · ' + m.label, (l) => createdIn(l) && monthKey(l) === m.key && isDemo(l))}>{m.demos}</td>
                   <td className="right link" onClick={() => go('Sales · ' + m.label, (l) => isWon(l.stage) && revIn(l) && revenueMonthKey(l) === m.key)}>{m.sales}</td>
                   <td className="right" title="Collections recognized this month (won leads)">{fmtMoney(m.coll) || '—'}</td>
                   <td className="right" title="Our revenue = charge % of won collections">{fmtMoney(m.rev) || '—'}</td>
@@ -219,7 +219,7 @@ export default function Dashboard() {
                     <tr key={s}>
                       <td className="link" onClick={() => go('Specialty: ' + s, (l) => createdIn(l) && specKey(l) === s)}>{s}</td>
                       <td className="right link" onClick={() => go('Specialty: ' + s, (l) => createdIn(l) && specKey(l) === s)}>{v.leads}</td>
-                      <td className="right link" onClick={() => go('Demos · ' + s, (l) => createdIn(l) && specKey(l) === s && isDemo(l.stage))}>{v.demos}</td>
+                      <td className="right link" onClick={() => go('Demos · ' + s, (l) => createdIn(l) && specKey(l) === s && isDemo(l))}>{v.demos}</td>
                       <td className="right link" onClick={() => go('Sales · ' + s, (l) => isWon(l.stage) && revIn(l) && specKey(l) === s)}>{v.sales}</td>
                       <td className="right" title="Collections from closed (won) leads">{fmtMoney(v.coll) || '—'}</td>
                       <td className="right" title="Our revenue = charge % of won collections">{fmtMoney(v.rev) || '—'}</td>

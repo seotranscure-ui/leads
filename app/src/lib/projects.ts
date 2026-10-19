@@ -123,7 +123,7 @@ export const FALLBACK_FUNNEL: FunnelConfig = {
     { name: 'Won', color: '#15803d', reachedDemo: true, won: true, lost: false, statuses: ['won lead', 'won'] },
     { name: 'Lost', color: '#dc2626', reachedDemo: false, won: false, lost: true, statuses: ['lost', 'lost lead', 'lost / contract lead', 'not-qualified', 'not qualified', 'junk lead'] },
   ],
-  demoStatuses: ['lost', 'lost / contract lead'],
+  demoStatuses: ['lost lead', 'lost', 'lost / contract lead'],
 }
 
 export const FALLBACK_PROJECT: Project = {

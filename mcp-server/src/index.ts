@@ -46,7 +46,7 @@ interface Lead {
 
 const isWon = (s: string): boolean => s === 'Won'
 // Statuses that count as demo-reached whatever their stage (lost after a demo).
-const DEMO_STATUSES = ['lost', 'lost / contract lead']
+const DEMO_STATUSES = ['lost lead', 'lost', 'lost / contract lead']
 const isDemo = (l: Lead): boolean => {
   const i = FUNNEL_ORDER.indexOf(l.stage as (typeof FUNNEL_ORDER)[number])
   return (i >= 2 && i <= 5) || DEMO_STATUSES.includes((l.status || '').trim().toLowerCase())

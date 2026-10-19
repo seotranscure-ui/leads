@@ -45,7 +45,12 @@ interface Lead {
 }
 
 const isWon = (s: string): boolean => s === 'Won'
-const isDemo = (s: string): boolean => { const i = FUNNEL_ORDER.indexOf(s as (typeof FUNNEL_ORDER)[number]); return i >= 2 && i <= 5 }
+// Statuses that count as demo-reached whatever their stage (lost after a demo).
+const DEMO_STATUSES = ['lost', 'lost / contract lead']
+const isDemo = (l: Lead): boolean => {
+  const i = FUNNEL_ORDER.indexOf(l.stage as (typeof FUNNEL_ORDER)[number])
+  return (i >= 2 && i <= 5) || DEMO_STATUSES.includes((l.status || '').trim().toLowerCase())
+}
 const num = (v: unknown): number | null => { if (v == null) return null; const n = Number(v); return isNaN(n) ? null : n }
 const ticketValue = (l: Lead): number | null => (l.manual_ticket != null ? num(l.manual_ticket) : l.monthly_collections != null ? num(l.monthly_collections) : null)
 const chargePct = (l: Lead): number => (l.manual_charge_pct != null ? Number(l.manual_charge_pct) : DEFAULT_CHARGE_PCT)
@@ -209,7 +214,7 @@ Returns: total leads, demos (reached demo+), sales (won), Leads→Demos %, Demos
   async (p) => {
     try {
       const leads = applyFilters(await fetchLeads(), p)
-      const demos = leads.filter((l) => isDemo(l.stage)).length
+      const demos = leads.filter((l) => isDemo(l)).length
       const sales = leads.filter((l) => isWon(l.stage)).length
       const highTicket = leads.filter((l) => l.manual_high === true).length
       const wonCollections = leads.filter((l) => isWon(l.stage)).reduce((s, l) => s + (ticketValue(l) || 0), 0)
@@ -250,7 +255,7 @@ server.registerTool(
       const bucket = (key: string, label: string) => (map[key] ||= { key, label, leads: 0, demos: 0, sales: 0, coll: 0, rev: 0 })
       for (const l of leads) {
         const created = monthKeyOf(l.created_utc)
-        const cb = bucket(created.key, created.label); cb.leads++; if (isDemo(l.stage)) cb.demos++
+        const cb = bucket(created.key, created.label); cb.leads++; if (isDemo(l)) cb.demos++
         if (isWon(l.stage)) { const k = l.manual_revenue_month || created.key; const ab = bucket(k, k === created.key ? created.label : labelForKey(k)); ab.sales++; ab.coll += ticketValue(l) || 0; ab.rev += leadRevenue(l) }
       }
       const rows = Object.values(map).sort((a, b) => (a.key < b.key ? 1 : -1))
@@ -277,7 +282,7 @@ server.registerTool(
       for (const l of leads) {
         const key = (p.dimension === 'source' ? l.source : (l.specialty || '').trim() || '(unspecified)') || '(blank)'
         const g = (map[key] ||= { leads: 0, demos: 0, sales: 0, coll: 0, rev: 0 })
-        g.leads++; if (isDemo(l.stage)) g.demos++
+        g.leads++; if (isDemo(l)) g.demos++
         if (isWon(l.stage)) { g.sales++; g.coll += ticketValue(l) || 0; g.rev += leadRevenue(l) }
       }
       const rows = Object.entries(map).sort((a, b) => b[1].leads - a[1].leads)

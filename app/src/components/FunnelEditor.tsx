@@ -16,11 +16,12 @@ const BLANK: FunnelStage = { name: '', color: '#94a3b8', reachedDemo: false, won
 export default function FunnelEditor() {
   const { project, funnel, updateProject, refresh } = useAppData()
   const [stages, setStages] = useState<FunnelStage[]>(funnel.stages)
+  const [demoStatuses, setDemoStatuses] = useState<string[]>(funnel.demoStatuses ?? [])
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
   const [busy, setBusy] = useState(false)
 
   // Reset the draft when the workspace changes.
-  useEffect(() => { setStages(funnel.stages); setMsg(null) }, [project.id, funnel])
+  useEffect(() => { setStages(funnel.stages); setDemoStatuses(funnel.demoStatuses ?? []); setMsg(null) }, [project.id, funnel])
 
   const set = (i: number, patch: Partial<FunnelStage>) =>
     setStages((prev) => prev.map((s, idx) => (idx === i ? { ...s, ...patch } : s)))
@@ -68,6 +69,7 @@ export default function FunnelEditor() {
         name: s.name.trim(),
         statuses: s.statuses.map((x) => x.trim().toLowerCase()).filter(Boolean),
       })),
+      demoStatuses: demoStatuses.map((x) => x.trim().toLowerCase()).filter(Boolean),
     }
     try {
       await updateProject({ funnel: clean })
@@ -87,6 +89,7 @@ export default function FunnelEditor() {
   }
 
   const dirty = JSON.stringify(stages) !== JSON.stringify(funnel.stages)
+    || JSON.stringify(demoStatuses) !== JSON.stringify(funnel.demoStatuses ?? [])
 
   return (
     <div className="card" style={{ maxWidth: 860 }}>
@@ -145,12 +148,23 @@ export default function FunnelEditor() {
         ))}
       </div>
 
+      <label style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 3, fontSize: 10.5, textTransform: 'uppercase', letterSpacing: '.3px', color: 'var(--muted)', fontWeight: 700 }}>
+        Also count as Demo — CRM statuses
+        <textarea rows={2} value={demoStatuses.join('\n')}
+                  onChange={(e) => setDemoStatuses(e.target.value.split('\n'))}
+                  placeholder={'lost\nlost / contract lead'}
+                  style={{ font: 'inherit', fontSize: 12, textTransform: 'none', letterSpacing: 0, fontWeight: 400, padding: '6px 8px', border: '1px solid var(--line)', borderRadius: 7, resize: 'vertical' }} />
+        <span style={{ textTransform: 'none', letterSpacing: 0, fontWeight: 400 }}>
+          Leads with these statuses count toward Leads→Demos whatever their stage (e.g. lost after a demo). One per line.
+        </span>
+      </label>
+
       <div className="controls" style={{ marginTop: 12 }}>
         <button className="btn ghost" onClick={add}>+ Add stage</button>
         <button className="btn" onClick={save} disabled={busy || !dirty} style={{ marginLeft: 'auto' }}>
           {busy ? 'Saving…' : dirty ? 'Save funnel & re-map leads' : 'No changes'}
         </button>
-        {dirty && <button className="btn ghost" onClick={() => setStages(funnel.stages)} disabled={busy}>Discard</button>}
+        {dirty && <button className="btn ghost" onClick={() => { setStages(funnel.stages); setDemoStatuses(funnel.demoStatuses ?? []) }} disabled={busy}>Discard</button>}
       </div>
 
       <div className="note" style={{ marginTop: 4 }}>

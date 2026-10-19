@@ -15,6 +15,11 @@ export interface FunnelStage {
 
 export interface FunnelConfig {
   stages: FunnelStage[]
+  /**
+   * CRM statuses (lowercased) that count toward Demos even though their stage is
+   * not demo-reached — e.g. leads lost after a demo. They stay on their own stage.
+   */
+  demoStatuses?: string[]
 }
 
 export interface Project {
@@ -57,10 +62,13 @@ export function stageForIn(f: FunnelConfig, status: string | null | undefined): 
 
 /**
  * Did this lead reach the demo milestone? Driven by the stage's own flag rather
- * than its index, so a project can put the milestone anywhere in its pipeline.
+ * than its index, so a project can put the milestone anywhere in its pipeline,
+ * plus the funnel's `demoStatuses`, which count regardless of stage.
  */
-export function isDemoIn(f: FunnelConfig, stage: string): boolean {
-  return stageByName(f, stage)?.reachedDemo ?? false
+export function isDemoIn(f: FunnelConfig, stage: string, status?: string | null): boolean {
+  if (stageByName(f, stage)?.reachedDemo) return true
+  const key = (status || '').trim().toLowerCase()
+  return !!key && (f.demoStatuses ?? []).includes(key)
 }
 
 export function isWonIn(f: FunnelConfig, stage: string): boolean {
@@ -113,8 +121,9 @@ export const FALLBACK_FUNNEL: FunnelConfig = {
     { name: 'Audit', color: '#16a34a', reachedDemo: true, won: false, lost: false, statuses: ['under audit'] },
     { name: 'Negotiation', color: '#0891b2', reachedDemo: true, won: false, lost: false, statuses: ['agreement sent', 'contract sent'] },
     { name: 'Won', color: '#15803d', reachedDemo: true, won: true, lost: false, statuses: ['won lead', 'won'] },
-    { name: 'Lost', color: '#dc2626', reachedDemo: false, won: false, lost: true, statuses: ['lost lead', 'lost / contract lead', 'not-qualified', 'not qualified', 'junk lead'] },
+    { name: 'Lost', color: '#dc2626', reachedDemo: false, won: false, lost: true, statuses: ['lost', 'lost lead', 'lost / contract lead', 'not-qualified', 'not qualified', 'junk lead'] },
   ],
+  demoStatuses: ['lost', 'lost / contract lead'],
 }
 
 export const FALLBACK_PROJECT: Project = {

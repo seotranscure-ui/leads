@@ -9,6 +9,7 @@ import {
 import { displayName, type Lead } from '../lib/leads'
 import StageChip from './StageChip'
 import MultiSelect from './MultiSelect'
+import { downloadCSV } from '../lib/csv'
 
 interface SeqRow {
   seq: FollowUpSequence
@@ -47,9 +48,45 @@ const SORTS = [
 const daysBetween = (a: string, b: string): number =>
   Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 86_400_000)
 
+/**
+ * One flat CSV record per lead, mirroring what the table shows plus a column
+ * pair per week — so an export of a filtered view is self-explanatory without
+ * having to cross-reference the app.
+ */
+function followUpExportRow(r: SeqRow): Record<string, unknown> {
+  const l = r.lead
+  const row: Record<string, unknown> = {
+    Lead: l ? displayName(l) : r.seq.lead_record_id,
+    Practice: l?.practice ?? '',
+    Email: l?.email ?? '',
+    Phone: l?.phone ?? '',
+    Specialty: l?.specialty ?? '',
+    Stage: l?.stage ?? '',
+    'Sequence status': r.statusLabel,
+    'Due state': r.dueState,
+    'Next week': r.next?.step_number ?? '',
+    'Next due': r.next?.scheduled_date ?? '',
+    'Days overdue': r.overdueDays || '',
+    'Channels done': r.doneChannels,
+    'Channels total': r.totalChannels,
+    'Progress %': r.totalChannels ? Math.round((r.doneChannels / r.totalChannels) * 100) : 0,
+    'Reminder email': r.effEmail,
+    'Email source': (r.seq.manager_email ?? '').trim() ? 'custom' : 'default',
+    Started: (r.seq.started_at ?? '').slice(0, 10),
+  }
+  // Fixed Week 1..5 columns regardless of how many steps a sequence has, so
+  // every exported row lines up in the same spreadsheet columns.
+  for (let n = 1; n <= 5; n++) {
+    const step = r.steps.find((s) => s.step_number === n)
+    row[`Week ${n} due`] = step?.scheduled_date ?? ''
+    row[`Week ${n} outstanding`] = step ? pendingChannels(step).join(', ') : ''
+  }
+  return row
+}
+
 export default function FollowUps() {
   const {
-    leads, sequences, steps, followUpError, managerEmail, automation,
+    leads, sequences, steps, followUpError, managerEmail, automation, project,
     toggleChannel, completeStep, rescheduleStep, resolveSequence, changeSequenceEmail,
   } = useAppData()
   const nav = useNavigate()
@@ -199,6 +236,14 @@ export default function FollowUps() {
   }
   const sortMark = (k: string) => (sortKey === k ? (sortDir === 1 ? ' ▲' : ' ▼') : '')
 
+  // Exports exactly what is on screen — the active filters and the current sort
+  // order — rather than the whole workspace.
+  const exportRows = () => {
+    if (!rows.length) return
+    const slug = filtersOn ? 'filtered' : 'all'
+    downloadCSV(`${project.id}_follow_ups_${slug}_${todayIso()}.csv`, rows.map(followUpExportRow))
+  }
+
   const dueCount = useMemo(() =>
     steps.filter((s) => {
       const seq = sequences.find((sq) => sq.id === s.sequence_id)
@@ -297,6 +342,10 @@ export default function FollowUps() {
           to <input type="date" value={dueTo} onChange={(e) => setDueTo(e.target.value)} />
         </span>
         <button className="btn ghost" onClick={clearFilters} disabled={!filtersOn}>Clear filters</button>
+        <button className="btn" onClick={exportRows} disabled={!rows.length}
+                title={filtersOn ? `Export the ${rows.length} row${rows.length === 1 ? '' : 's'} currently shown` : 'Export all rows'}>
+          Export CSV{filtersOn && rows.length !== allRows.length ? ` (${rows.length})` : ''}
+        </button>
         <span className="small muted" style={{ marginLeft: 'auto' }}>
           Sorted by <b>{SORTS.find((s) => s.key === sortKey)?.label}</b>{sortDir === 1 ? ' ▲' : ' ▼'}
         </span>

@@ -4,13 +4,12 @@
  */
 import type { McpServer } from '@modelcontextprotocol/server'
 import * as z from 'zod/v4'
-import { confirmPhrase } from '../config.js'
+import { confirmPhrase, isHosted } from '../config.js'
 import { csvRowToLead, parseCSV, rowsToObjects } from '../csv.js'
 import { displayName, fmtMoney, ticketValue } from '../domain.js'
 import { WORKSPACE } from '../filters.js'
 import { ResponseFormat, RESPONSE_FORMAT, json, safeText, table, text } from '../format.js'
 import { deleteLead, getLead, importLeads, invokeReminders, reapplyBatch } from '../repo.js'
-import { isDeno } from '../env.js'
 import { guardWrite, requireConfirmation, workspace } from './common.js'
 
 const MAX_CSV_BYTES = 25 * 1024 * 1024
@@ -109,8 +108,8 @@ The file is read from this machine's filesystem, so give an absolute path.`,
         }
 
         if (!a.file) throw new Error(`action "${a.action}" needs file — an absolute path to the CSV.`)
-        if (isDeno) {
-          // The hosted connector's filesystem is the function's, not the
+        if (isHosted()) {
+          // The hosted connector's filesystem is the server's, not the
           // caller's, so there is no file at that path and never will be.
           throw new Error(
             'This server is the hosted connector, which cannot read files from your computer. ' +

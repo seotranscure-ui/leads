@@ -124,6 +124,29 @@ async function main(): Promise<void> {
     assert.match(callText, /"leads":6/, 'the fixture has six leads')
     pass('a tool call runs end to end over HTTP and returns the right figures')
 
+    // ── the Vercel entry point ──────────────────────────────────────────────
+    // Vercel's Node runtime wants `export default { fetch }`, and its rewrite
+    // hands the function /api/mcp rather than the /mcp the caller typed — so
+    // the health probe has to be reachable by query string, not only by path.
+    const vercel = (await import('../src/vercel.js')).default
+    assert.equal(typeof vercel.fetch, 'function', 'Vercel needs a default export with a fetch method')
+
+    let v = await vercel.fetch(new Request('https://transcure-leads.vercel.app/api/mcp?health=1'))
+    assert.equal(v.status, 200)
+    assert.equal((await v.json() as Record<string, unknown>).ok, true)
+
+    v = await vercel.fetch(new Request('https://transcure-leads.vercel.app/api/mcp', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', ...auth },
+      body: JSON.stringify(init),
+    }))
+    assert.equal(v.status, 200, 'the Vercel entry must serve MCP at its rewritten path')
+    assert.match(await v.text(), /leads-tracker-mcp-server/)
+
+    v = await vercel.fetch(new Request('https://transcure-leads.vercel.app/api/mcp', { method: 'POST' }))
+    assert.equal(v.status, 401, 'the Vercel entry enforces the same bearer token')
+    pass('the Vercel entry exports a fetch handler, answers ?health=1, and gates on the same token')
+
     console.error(`\nHTTP smoke test passed (${checks} checks).`)
   } finally {
     await stub.close()

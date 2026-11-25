@@ -70,6 +70,18 @@ export function loadStoredCredentials(): StoredCredentials | null {
   return store?.load() ?? null
 }
 
+/**
+ * True when this process has no filesystem of the caller's to work with — any
+ * hosted deployment, whether Supabase Edge Functions or Vercel.
+ *
+ * Derived from whether a local credential store was installed rather than from
+ * sniffing the runtime, because that is the thing that actually differs: the
+ * local entry point calls useLocalStorage(), the hosted entry points do not.
+ */
+export function isHosted(): boolean {
+  return store === null
+}
+
 export function persistRotatedToken(token: string): void {
   try { store?.onTokenRotated(token) } catch { /* read-only config dir */ }
 }
@@ -129,11 +141,14 @@ export function allows(mode: Mode, required: Mode): boolean {
  */
 export function loadSettings(): Settings {
   const stored = loadStoredCredentials()
-  const url = (readEnv('SUPABASE_URL') ?? stored?.url ?? '').trim()
+  const url = (readEnv('SUPABASE_URL') ?? readEnv('VITE_SUPABASE_URL') ?? stored?.url ?? '').trim()
+  // VITE_* last: on Vercel the web app already defines them for the browser
+  // build, so a deployment there needs no extra Supabase variables at all.
   const anonKey = (
     readEnv('LEADS_MCP_ANON_KEY') ??
     readEnv('SUPABASE_ANON_KEY') ??
     readEnv('SUPABASE_PUBLISHABLE_KEY') ??
+    readEnv('VITE_SUPABASE_ANON_KEY') ??
     stored?.anonKey ??
     ''
   ).trim()

@@ -76,7 +76,11 @@ export function createHandler(): (req: Request) => Promise<Response> {
 
     // Unauthenticated liveness probe. Says the function is deployed and whether
     // it is configured — never what the configuration is.
-    if (req.method === 'GET' && url.pathname.endsWith('/health')) {
+    //
+    // Two ways to ask, because the path is not reliable: a Vercel rewrite hands
+    // the function its own route (/api/mcp), not the one the caller typed, so
+    // /mcp/health arrives with the health marker in the query string instead.
+    if (req.method === 'GET' && (url.pathname.endsWith('/health') || url.searchParams.has('health'))) {
       return json(200, {
         ok: !configError && !!expectedToken(),
         name: SERVER_NAME,

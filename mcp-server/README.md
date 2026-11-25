@@ -6,6 +6,10 @@ leads, follow-up sequences and workspace settings, for both Transcure and Macral
 It runs on your own machine and talks to Claude over stdio. Nothing is exposed to the internet,
 and there is no server to keep running.
 
+To add it as a **claude.ai custom connector** instead — reachable from the web and your phone —
+see [CONNECTOR.md](./CONNECTOR.md). That deploys the same tools as a Supabase Edge Function behind
+a bearer token. The two can coexist.
+
 ---
 
 ## What Claude can do with it
@@ -165,9 +169,12 @@ All optional, set in the MCP config's `env` block.
 
 ```bash
 npm run build      # after pulling changes
-npm run selftest   # 35 logic checks: funnel mapping, money rules, filters, CSV import, budgets
+npm run selftest   # 37 logic checks: funnel mapping, money rules, filters, CSV import, budgets
 npm run smoke      # 23 end-to-end checks against a stub database: every tool, both output
                    # formats, mode gating, the confirmation gates, text sanitising
+npm run smoke:http # 8 checks on the hosted connector: fails closed with no token, rejects
+                   # wrong and near-miss tokens, serves the tool set over HTTP
+npm run bundle     # regenerate supabase/functions/leads-mcp/server.mjs for the connector
 npm run doctor     # live connection check
 npm run logout     # revoke the stored session
 ```

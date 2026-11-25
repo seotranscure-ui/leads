@@ -8,7 +8,8 @@
  * numbers that look plausible and are wrong.
  */
 import { strict as assert } from 'node:assert'
-import { confirmPhrase } from '../src/config.js'
+import { confirmPhrase, looksLikeSecretKey } from '../src/config.js'
+import { timingSafeEqual } from '../src/env.js'
 import { csvRowToLead, parseCSV, rowsToObjects } from '../src/csv.js'
 import {
   bareRecordId, defaultDates, displayName, effectiveEmail, fixRange, isDemoIn, isHigh, isLostIn,
@@ -377,6 +378,35 @@ check('fitToBudget keeps at least one item even when it alone is oversized', () 
 check('confirmation phrases name the specific target', () => {
   assert.equal(confirmPhrase('delete', 'mac:999'), 'DELETE mac:999')
   assert.notEqual(confirmPhrase('DELETE', 'a'), confirmPhrase('DELETE', 'b'))
+})
+
+check('a Supabase secret key is recognised whatever variable it arrived in', () => {
+  // The new prefixed format.
+  assert.equal(looksLikeSecretKey('sb_secret_abc123'), true)
+  assert.equal(looksLikeSecretKey('SB_SECRET_ABC'), true)
+  assert.equal(looksLikeSecretKey('sb_publishable_abc123'), false)
+  // A legacy JWT is judged by its role claim, not its shape.
+  const jwt = (payload: object): string =>
+    ['e30', Buffer.from(JSON.stringify(payload)).toString('base64url'), 'sig'].join('.')
+  assert.equal(looksLikeSecretKey(jwt({ role: 'service_role' })), true)
+  assert.equal(looksLikeSecretKey(jwt({ role: 'anon' })), false)
+  assert.equal(looksLikeSecretKey(jwt({})), false)
+  // Nothing here may throw on junk: it runs before anything else is validated.
+  assert.equal(looksLikeSecretKey(''), false)
+  assert.equal(looksLikeSecretKey('not.a.jwt'), false)
+  assert.equal(looksLikeSecretKey('a.b'), false)
+})
+
+check('token comparison is length-independent and still correct', () => {
+  assert.equal(timingSafeEqual('secret', 'secret'), true)
+  assert.equal(timingSafeEqual('secret', 'secreu'), false)
+  assert.equal(timingSafeEqual('secret', 'secre'), false, 'a prefix must not pass')
+  assert.equal(timingSafeEqual('secret', 'secretx'), false, 'an extension must not pass')
+  assert.equal(timingSafeEqual('', ''), true)
+  assert.equal(timingSafeEqual('', 'x'), false)
+  // Multi-byte characters compare by their encoded bytes, not by code unit.
+  assert.equal(timingSafeEqual('tokén', 'tokén'), true)
+  assert.equal(timingSafeEqual('tokén', 'token'), false)
 })
 
 if (process.exitCode) console.error(`\n${passed} check(s) passed, some failed.`)

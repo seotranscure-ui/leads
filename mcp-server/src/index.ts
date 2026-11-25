@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 /**
- * Lead Tracker MCP server.
+ * Lead Tracker MCP server — local stdio entry point.
  *
  * Gives Claude the same capabilities a person has in the web tracker — reading,
- * analysing, editing leads and follow-ups, and running the reminder job —
- * over a local stdio connection.
+ * analysing, editing leads and follow-ups, and running the reminder job — over
+ * a local stdio connection. Claude Desktop and Claude Code launch this as a
+ * child process; there is no network listener.
  *
  * Three things keep that safe rather than reckless:
  *
@@ -18,45 +19,22 @@
  *      names the specific target.
  *
  * There is no "run SQL" tool, by design.
+ *
+ * The hosted equivalent, for claude.ai custom connectors, is http.ts.
  */
-import { McpServer } from '@modelcontextprotocol/server'
 import { serveStdio } from '@modelcontextprotocol/server/stdio'
-import { allows, SERVER_NAME, SERVER_VERSION, type Mode } from './config.js'
+import { SERVER_NAME, SERVER_VERSION, type Mode } from './config.js'
+import { useLocalStorage } from './credentials.js'
+import { createServer } from './server.js'
 import { settings } from './supabase.js'
-import { registerActivity } from './tools/activity.js'
-import { registerAdmin } from './tools/admin.js'
-import { registerAnalyze } from './tools/analyze.js'
-import { registerFollowUpsRead, registerFollowUpsWrite } from './tools/followups.js'
-import { registerInsights } from './tools/insights.js'
-import { registerSearch } from './tools/search.js'
-import { registerWrite } from './tools/write.js'
-import { registerWorkspaceRead, registerWorkspaceWrite } from './tools/workspace.js'
 
-export function createServer(mode: Mode): McpServer {
-  const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION })
-
-  // Always available.
-  registerWorkspaceRead(server)
-  registerSearch(server)
-  registerAnalyze(server)
-  registerInsights(server)
-  registerFollowUpsRead(server)
-  registerActivity(server)
-
-  if (allows(mode, 'write')) {
-    registerWrite(server)
-    registerFollowUpsWrite(server)
-    registerWorkspaceWrite(server)
-  }
-
-  if (allows(mode, 'admin')) {
-    registerAdmin(server)
-  }
-
-  return server
-}
+export { createServer }
 
 function main(): void {
+  // Point config and the audit journal at this machine's filesystem. The hosted
+  // connector deliberately never does this.
+  useLocalStorage()
+
   let mode: Mode
   try {
     mode = settings().mode

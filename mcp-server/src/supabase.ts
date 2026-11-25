@@ -6,7 +6,7 @@
  * `auth.getUser()` returns a person, so writes land with a real author id.
  */
 import { createClient, type SupabaseClient, type User } from '@supabase/supabase-js'
-import { loadSettings, updateRefreshToken, type Settings } from './config.js'
+import { loadSettings, persistRotatedToken, type Settings } from './config.js'
 
 let settingsCache: Settings | null = null
 export function settings(): Settings {
@@ -36,7 +36,7 @@ function rawClient(): SupabaseClient {
   // would demand a fresh `npm run login` every time.
   clientCache.auth.onAuthStateChange((event, session) => {
     if (session?.refresh_token && (event === 'TOKEN_REFRESHED' || event === 'SIGNED_IN')) {
-      try { updateRefreshToken(session.refresh_token) } catch { /* read-only config dir */ }
+      persistRotatedToken(session.refresh_token)
     }
   })
   return clientCache
@@ -51,7 +51,7 @@ async function doSignIn(): Promise<void> {
     if (!error && data.user) {
       signedInUser = data.user
       if (data.session?.refresh_token) {
-        try { updateRefreshToken(data.session.refresh_token) } catch { /* ignore */ }
+        persistRotatedToken(data.session.refresh_token)
       }
       return
     }

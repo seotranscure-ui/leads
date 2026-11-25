@@ -11,7 +11,7 @@
  */
 import { createInterface } from 'node:readline'
 import { createClient } from '@supabase/supabase-js'
-import { clearCredentials, credentialsPath, loadCredentials, saveCredentials } from '../src/config.js'
+import { clearCredentials, credentialsPath, loadCredentials, saveCredentials } from '../src/credentials.js'
 
 const rl = createInterface({ input: process.stdin, output: process.stdout })
 

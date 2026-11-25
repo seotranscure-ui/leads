@@ -18,10 +18,7 @@
  *    write tools do not exist, so no prompt and no injected instruction can
  *    reach them.
  */
-import { createHash, randomUUID } from 'node:crypto'
-import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { isDeno, readEnv } from './env.js'
 
 export const SERVER_NAME = 'leads-tracker-mcp-server'
 export const SERVER_VERSION = '2.0.0'
@@ -30,14 +27,6 @@ export const CHARACTER_LIMIT = 25_000
 /** Capability tiers. Each includes the ones before it. */
 export type Mode = 'read' | 'write' | 'admin'
 const MODES: Mode[] = ['read', 'write', 'admin']
-
-export function configDir(): string {
-  const override = process.env.LEADS_MCP_HOME
-  if (override && override.trim()) return override.trim()
-  return join(homedir(), '.config', 'leads-mcp')
-}
-export const credentialsPath = (): string => join(configDir(), 'credentials.json')
-export const auditPath = (): string => join(configDir(), 'audit.log')
 
 export interface StoredCredentials {
   /** Supabase project URL, e.g. https://xxxx.supabase.co */
@@ -52,57 +41,60 @@ export interface StoredCredentials {
 }
 
 /**
- * Write the credentials file with owner-only permissions.
+ * Where a stored session comes from, when there is one.
  *
- * The file is created at 0600 *before* anything is written into it, so the
- * secret is never briefly readable under a laxer default umask.
+ * The local server installs a filesystem-backed store (credentials.ts); the
+ * hosted connector installs nothing and is configured purely from secrets.
+ * Injecting it this way is what keeps filesystem code out of the deployed
+ * bundle entirely.
  */
-export function saveCredentials(c: StoredCredentials): void {
-  const file = credentialsPath()
-  mkdirSync(dirname(file), { recursive: true, mode: 0o700 })
-  writeFileSync(file, '', { mode: 0o600 })
-  try { chmodSync(file, 0o600) } catch { /* Windows: ACLs, not modes */ }
-  writeFileSync(file, JSON.stringify({ ...c, savedAt: new Date().toISOString() }, null, 2) + '\n', { mode: 0o600 })
+export interface CredentialStore {
+  load: () => StoredCredentials | null
+  /** Supabase rotates refresh tokens; this persists the new one. */
+  onTokenRotated: (token: string) => void
 }
 
-export function clearCredentials(): boolean {
-  const file = credentialsPath()
-  if (!existsSync(file)) return false
-  unlinkSync(file)
-  return true
+let store: CredentialStore | null = null
+
+export function setCredentialStore(s: CredentialStore | null): void {
+  store = s
 }
 
 /**
- * Refuse a credentials file that other accounts on this machine can read.
+ * The stored session, or null when nothing is stored.
  *
- * Only enforced on POSIX: Windows reports a synthetic mode that has nothing to
- * do with its real ACLs, so checking it there would reject every valid file.
+ * Errors propagate on purpose: a credentials file with loosened permissions
+ * must reach the user as that, not be flattened into "not signed in".
  */
-function assertPrivate(file: string): void {
-  if (process.platform === 'win32') return
-  const mode = statSync(file).mode & 0o777
-  if (mode & 0o077) {
-    throw new Error(
-      `Credentials file ${file} is readable by other users (mode ${mode.toString(8)}). ` +
-      `Run: chmod 600 "${file}"`,
-    )
+export function loadStoredCredentials(): StoredCredentials | null {
+  return store?.load() ?? null
+}
+
+export function persistRotatedToken(token: string): void {
+  try { store?.onTokenRotated(token) } catch { /* read-only config dir */ }
+}
+
+/**
+ * Does this key grant more than a signed-in user?
+ *
+ * Covers both key formats: the new `sb_secret_...` prefix, and a legacy JWT
+ * whose payload claims the `service_role`. Checking the key itself, rather than
+ * which environment variable it arrived in, is what makes the guard hold on a
+ * runtime that injects a service key of its own.
+ */
+export function looksLikeSecretKey(key: string): boolean {
+  const k = key.trim()
+  if (!k) return false
+  if (/^sb_secret_/i.test(k)) return true
+  const parts = k.split('.')
+  if (parts.length !== 3) return false
+  try {
+    const pad = parts[1].replace(/-/g, '+').replace(/_/g, '/')
+    const payload = JSON.parse(atob(pad + '='.repeat((4 - (pad.length % 4)) % 4))) as { role?: string }
+    return payload.role === 'service_role'
+  } catch {
+    return false
   }
-}
-
-export function loadCredentials(): StoredCredentials | null {
-  const file = credentialsPath()
-  if (!existsSync(file)) return null
-  assertPrivate(file)
-  const parsed = JSON.parse(readFileSync(file, 'utf8')) as Partial<StoredCredentials>
-  if (!parsed.url || !parsed.anonKey || !parsed.refreshToken) return null
-  return parsed as StoredCredentials
-}
-
-/** Persist a rotated refresh token, leaving the rest of the file untouched. */
-export function updateRefreshToken(token: string): void {
-  const current = loadCredentials()
-  if (!current) return
-  saveCredentials({ ...current, refreshToken: token })
 }
 
 export interface Settings {
@@ -136,22 +128,36 @@ export function allows(mode: Mode, required: Mode): boolean {
  * different project without touching the file.
  */
 export function loadSettings(): Settings {
-  const stored = loadCredentials()
-  const url = (process.env.SUPABASE_URL ?? stored?.url ?? '').trim()
+  const stored = loadStoredCredentials()
+  const url = (readEnv('SUPABASE_URL') ?? stored?.url ?? '').trim()
   const anonKey = (
-    process.env.LEADS_MCP_ANON_KEY ??
-    process.env.SUPABASE_ANON_KEY ??
-    process.env.SUPABASE_PUBLISHABLE_KEY ??
+    readEnv('LEADS_MCP_ANON_KEY') ??
+    readEnv('SUPABASE_ANON_KEY') ??
+    readEnv('SUPABASE_PUBLISHABLE_KEY') ??
     stored?.anonKey ??
     ''
   ).trim()
-  const email = (process.env.LEADS_MCP_EMAIL ?? '').trim() || undefined
-  const password = process.env.LEADS_MCP_PASSWORD || undefined
-  const refreshToken = (process.env.LEADS_MCP_REFRESH_TOKEN ?? stored?.refreshToken ?? '').trim() || undefined
+  const email = (readEnv('LEADS_MCP_EMAIL') ?? '').trim() || undefined
+  const password = readEnv('LEADS_MCP_PASSWORD') || undefined
+  const refreshToken = (readEnv('LEADS_MCP_REFRESH_TOKEN') ?? stored?.refreshToken ?? '').trim() || undefined
 
-  if (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY) {
-    // Loud, because silently accepting it would quietly disable RLS for every
-    // tool below and make writes untraceable to a person.
+  // Two separate guards, because they catch different mistakes.
+  //
+  // The first is about what this server will actually authenticate with. It is
+  // the one that matters: a secret key here would disable Row Level Security
+  // for every tool and make writes untraceable to a person.
+  if (looksLikeSecretKey(anonKey)) {
+    throw new Error(
+      'Refusing to use a Supabase service_role / secret key to connect. ' +
+      'This server signs in as a tracker user so Row Level Security stays on and writes are attributed. ' +
+      'Use the publishable (anon) key instead — it is public by design.',
+    )
+  }
+  // The second catches a local install configured with one by mistake. It is
+  // skipped on the hosted runtime, where Supabase injects
+  // SUPABASE_SERVICE_ROLE_KEY into every Edge Function whether you want it or
+  // not; the guard above already proves it is not the key being used.
+  if (!isDeno && (readEnv('SUPABASE_SERVICE_ROLE_KEY') || readEnv('SUPABASE_SECRET_KEY'))) {
     throw new Error(
       'Refusing to start with a Supabase service_role / secret key in the environment. ' +
       'This server signs in as a tracker user so Row Level Security stays on and writes are attributed. ' +
@@ -167,17 +173,18 @@ export function loadSettings(): Settings {
     )
   }
 
-  const maxBatch = Number(process.env.LEADS_MCP_MAX_BATCH ?? 200)
+  const maxBatch = Number(readEnv('LEADS_MCP_MAX_BATCH') ?? 200)
   return {
     url,
     anonKey,
     email,
     password,
     refreshToken,
-    mode: parseMode(process.env.LEADS_MCP_MODE),
-    defaultProject: (process.env.LEADS_MCP_DEFAULT_PROJECT ?? 'transcure').trim(),
+    mode: parseMode(readEnv('LEADS_MCP_MODE')),
+    defaultProject: (readEnv('LEADS_MCP_DEFAULT_PROJECT') ?? 'transcure').trim(),
     maxBatch: Number.isFinite(maxBatch) && maxBatch > 0 ? Math.min(maxBatch, 1000) : 200,
-    auditEnabled: (process.env.LEADS_MCP_AUDIT ?? '1') !== '0',
+    // Nothing to write to on the hosted runtime; Supabase keeps the request log.
+    auditEnabled: !isDeno && (readEnv('LEADS_MCP_AUDIT') ?? '1') !== '0',
   }
 }
 
@@ -193,8 +200,3 @@ export function confirmPhrase(action: string, target: string): string {
   return `${action.toUpperCase()} ${target}`
 }
 
-export function shortHash(s: string): string {
-  return createHash('sha256').update(s).digest('hex').slice(0, 12)
-}
-
-export const newRunId = (): string => randomUUID().slice(0, 8)

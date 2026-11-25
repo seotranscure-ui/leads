@@ -98,11 +98,32 @@ reconstruct a sequence of actions and to spot one nobody asked for.
 
 Set `LEADS_MCP_AUDIT=0` to turn it off.
 
-## 8. The transport has no network surface
+## 8. The local transport has no network surface
 
 stdio only. Claude launches the server as a child process and talks to it over pipes. There is no
 port, no HTTP endpoint, no authentication of its own to get wrong, and nothing for anything else on
 the machine or network to connect to.
+
+The hosted connector (CONNECTOR.md) is the exception, and is built to be the only one:
+
+- **It fails closed.** Until `LEADS_MCP_BEARER_TOKEN` is set, and is at least 24 characters, every
+  request is answered 503 and nothing else happens. An endpoint that served data because its secret
+  was missing would be worse than one that is simply broken.
+- **Tokens are compared in constant time**, so the time a rejection takes does not reveal how much
+  of a guess was right. The test suite checks that a one-character-short prefix of the real token is
+  refused.
+- **Rejections disclose nothing** — not the expected token, not the session, not the configuration.
+  The unauthenticated `/health` probe reports only whether the server is ready.
+- **It carries no filesystem code at all.** The credential store and the audit journal are injected
+  by the local entry point, so the deployed bundle imports no `node:fs` — there is nothing there to
+  read a file with even if a tool were talked into trying.
+- Supabase's own JWT check is deliberately off, because it only proves the caller holds the anon
+  key, which is published in the website's JavaScript. It keeps nobody out while occupying the
+  header a real secret needs.
+
+What it gives up is per-person attribution: it signs in as one account, so writes are that
+account's. That is the price of a shared token, and it is why the account should be created for the
+connector rather than being someone's own.
 
 ## 9. Secrets stay out of errors and logs
 

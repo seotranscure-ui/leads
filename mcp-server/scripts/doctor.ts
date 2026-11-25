@@ -6,7 +6,7 @@
  * Prints no secrets.
  */
 import { existsSync, statSync } from 'node:fs'
-import { auditPath, credentialsPath } from '../src/config.js'
+import { auditPath, credentialsPath, useLocalStorage } from '../src/credentials.js'
 import { client, currentUser, settings } from '../src/supabase.js'
 import { fetchLeads, fetchReminderLog, fetchSequences, listProjects } from '../src/repo.js'
 
@@ -15,6 +15,7 @@ const bad = (s: string): void => console.log(`  FAIL  ${s}`)
 const info = (s: string): void => console.log(`        ${s}`)
 
 async function main(): Promise<void> {
+  useLocalStorage()
   console.log('Lead Tracker MCP server — connection check\n')
 
   console.log('Configuration')

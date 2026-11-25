@@ -2,8 +2,6 @@
  * The operations that can lose data or send mail. Registered only in `admin`
  * mode, and each one demands a confirmation phrase naming its exact target.
  */
-import { readFileSync, statSync } from 'node:fs'
-import { resolve } from 'node:path'
 import type { McpServer } from '@modelcontextprotocol/server'
 import * as z from 'zod/v4'
 import { confirmPhrase } from '../config.js'
@@ -12,6 +10,7 @@ import { displayName, fmtMoney, ticketValue } from '../domain.js'
 import { WORKSPACE } from '../filters.js'
 import { ResponseFormat, RESPONSE_FORMAT, json, safeText, table, text } from '../format.js'
 import { deleteLead, getLead, importLeads, invokeReminders, reapplyBatch } from '../repo.js'
+import { isDeno } from '../env.js'
 import { guardWrite, requireConfirmation, workspace } from './common.js'
 
 const MAX_CSV_BYTES = 25 * 1024 * 1024
@@ -110,6 +109,20 @@ The file is read from this machine's filesystem, so give an absolute path.`,
         }
 
         if (!a.file) throw new Error(`action "${a.action}" needs file — an absolute path to the CSV.`)
+        if (isDeno) {
+          // The hosted connector's filesystem is the function's, not the
+          // caller's, so there is no file at that path and never will be.
+          throw new Error(
+            'This server is the hosted connector, which cannot read files from your computer. ' +
+            'Upload the CSV on the tracker website, or run the import from a local install of this ' +
+            'MCP server. action="reapply" works here, because it re-runs a batch already in the database.',
+          )
+        }
+        // Imported where it is used, not at the top of the file: a static
+        // node:fs import would put filesystem code in the hosted bundle, which
+        // has no use for it and might not be allowed to load it at all.
+        const { readFileSync, statSync } = await import('node:fs')
+        const { resolve } = await import('node:path')
         const path = resolve(a.file)
         let size: number
         try {

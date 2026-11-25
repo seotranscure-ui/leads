@@ -8,6 +8,7 @@ import {
 } from '../lib/followups'
 import { displayName, type Lead } from '../lib/leads'
 import StageChip from './StageChip'
+import MultiSelect from './MultiSelect'
 
 interface SeqRow {
   seq: FollowUpSequence
@@ -20,7 +21,28 @@ interface SeqRow {
   /** Days the next outstanding step is past due; 0 if due today or later. */
   overdueDays: number
   finished: boolean
+  /** Derived labels, computed once so filtering and sorting agree. */
+  dueState: DueState
+  statusLabel: StatusLabel
+  effEmail: string
 }
+
+type DueState = 'Overdue' | 'Due today' | 'Upcoming' | 'Complete'
+type StatusLabel = 'Active' | 'Awaiting decision' | 'Won' | 'Lost'
+
+const DUE_STATES: DueState[] = ['Overdue', 'Due today', 'Upcoming', 'Complete']
+const STATUS_LABELS: StatusLabel[] = ['Active', 'Awaiting decision', 'Won', 'Lost']
+const WEEKS = ['1', '2', '3', '4', '5']
+
+const SORTS = [
+  { key: 'urgency', label: 'Priority' },
+  { key: 'lead', label: 'Lead' },
+  { key: 'stage', label: 'Stage' },
+  { key: 'progress', label: 'Progress' },
+  { key: 'due', label: 'Next due' },
+  { key: 'email', label: 'Reminder email' },
+  { key: 'status', label: 'Status' },
+] as const
 
 const daysBetween = (a: string, b: string): number =>
   Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 86_400_000)
@@ -32,8 +54,19 @@ export default function FollowUps() {
   } = useAppData()
   const nav = useNavigate()
 
-  const [filter, setFilter] = useState<'active' | 'all'>('active')
+  // Filters. An empty multi-select means "no restriction", matching how the
+  // Leads page behaves. Status defaults to Active so the page still opens on the
+  // work queue rather than every sequence ever created.
+  const [fStatus, setFStatus] = useState<string[]>(['Active', 'Awaiting decision'])
+  const [fDue, setFDue] = useState<string[]>([])
+  const [fStage, setFStage] = useState<string[]>([])
+  const [fWeek, setFWeek] = useState<string[]>([])
+  const [fEmail, setFEmail] = useState<string[]>([])
+  const [dueFrom, setDueFrom] = useState('')
+  const [dueTo, setDueTo] = useState('')
   const [q, setQ] = useState('')
+  const [sortKey, setSortKey] = useState<string>('urgency')
+  const [sortDir, setSortDir] = useState(1)
   const [open, setOpen] = useState<Set<string>>(() => new Set())
   const [resolving, setResolving] = useState<SeqRow | null>(null)
   const [editingEmail, setEditingEmail] = useState<string | null>(null)
@@ -54,38 +87,117 @@ export default function FollowUps() {
     return m
   }, [steps])
 
-  // One row per lead, ordered as a work queue: most overdue first, then by what
-  // falls due soonest, then finished sequences awaiting a decision.
-  const rows: SeqRow[] = useMemo(() => {
+  // Build every row once, with its derived labels, so the filters and the sort
+  // agree on what "overdue" or "awaiting decision" means.
+  const allRows: SeqRow[] = useMemo(() => {
     const today = todayIso()
+    return sequences.map((seq) => {
+      const lead = leadMap.get(seq.lead_record_id) ?? null
+      const sSteps = (stepsBySeq.get(seq.id) ?? []).sort((a, b) => a.step_number - b.step_number)
+      const totalChannels = sSteps.reduce((n, s) => n + s.channels.length, 0)
+      const doneChannels = sSteps.reduce((n, s) => n + s.channels.filter((c) => isChannelDone(s, c)).length, 0)
+      const next = nextPending(sSteps)
+      const overdueDays = next && next.scheduled_date < today ? daysBetween(next.scheduled_date, today) : 0
+      const finished = allDone(sSteps)
+
+      const dueState: DueState = finished ? 'Complete'
+        : overdueDays > 0 ? 'Overdue'
+        : next && isDueToday(next) ? 'Due today'
+        : 'Upcoming'
+
+      const statusLabel: StatusLabel = seq.status === 'won' ? 'Won'
+        : seq.status === 'lost' ? 'Lost'
+        : finished ? 'Awaiting decision'
+        : 'Active'
+
+      return {
+        seq, lead, steps: sSteps, doneChannels, totalChannels, next, overdueDays, finished,
+        dueState, statusLabel, effEmail: effectiveEmail(seq, managerEmail),
+      }
+    })
+  }, [sequences, leadMap, stepsBySeq, managerEmail])
+
+  // Filter options are drawn from the rows themselves, so they only ever offer
+  // values that would actually match something.
+  const stageOpts = useMemo(
+    () => [...new Set(allRows.map((r) => r.lead?.stage).filter(Boolean) as string[])].sort(),
+    [allRows],
+  )
+  const emailOpts = useMemo(
+    () => [...new Set(allRows.map((r) => r.effEmail).filter(Boolean))].sort(),
+    [allRows],
+  )
+
+  const rows: SeqRow[] = useMemo(() => {
     const term = q.trim().toLowerCase()
 
-    const built = sequences
-      .filter((s) => filter === 'all' || s.status === 'active')
-      .map((seq) => {
-        const lead = leadMap.get(seq.lead_record_id) ?? null
-        const sSteps = (stepsBySeq.get(seq.id) ?? []).sort((a, b) => a.step_number - b.step_number)
-        const totalChannels = sSteps.reduce((n, s) => n + s.channels.length, 0)
-        const doneChannels = sSteps.reduce((n, s) => n + s.channels.filter((c) => isChannelDone(s, c)).length, 0)
-        const next = nextPending(sSteps)
-        const overdueDays = next && next.scheduled_date < today ? daysBetween(next.scheduled_date, today) : 0
-        return { seq, lead, steps: sSteps, doneChannels, totalChannels, next, overdueDays, finished: allDone(sSteps) }
-      })
-      .filter((r) => {
-        if (!term) return true
+    const filtered = allRows.filter((r) => {
+      if (fStatus.length && !fStatus.includes(r.statusLabel)) return false
+      if (fDue.length && !fDue.includes(r.dueState)) return false
+      if (fStage.length && !fStage.includes(r.lead?.stage ?? '')) return false
+      if (fWeek.length && !fWeek.includes(String(r.next?.step_number ?? ''))) return false
+      if (fEmail.length && !fEmail.includes(r.effEmail)) return false
+      if (dueFrom || dueTo) {
+        const d = r.next?.scheduled_date
+        if (!d) return false
+        if (dueFrom && d < dueFrom) return false
+        if (dueTo && d > dueTo) return false
+      }
+      if (term) {
         const l = r.lead
-        return [l ? displayName(l) : r.seq.lead_record_id, l?.practice, l?.email, l?.specialty]
-          .some((v) => (v ?? '').toLowerCase().includes(term))
-      })
+        const hay = [l ? displayName(l) : r.seq.lead_record_id, l?.practice, l?.email, l?.specialty, r.effEmail]
+        if (!hay.some((v) => (v ?? '').toLowerCase().includes(term))) return false
+      }
+      return true
+    })
 
-    return built.sort((a, b) => {
+    // 'urgency' is the work-queue order: resolved sequences sink to the bottom
+    // (they need no action), then most overdue first, then those awaiting a
+    // decision, then whatever falls due soonest.
+    const urgency = (a: SeqRow, b: SeqRow): number => {
+      const aDone = a.seq.status !== 'active'
+      const bDone = b.seq.status !== 'active'
+      if (aDone !== bDone) return aDone ? 1 : -1
       if (b.overdueDays !== a.overdueDays) return b.overdueDays - a.overdueDays
       if (a.finished !== b.finished) return a.finished ? -1 : 1
-      const ad = a.next?.scheduled_date ?? '9999-12-31'
-      const bd = b.next?.scheduled_date ?? '9999-12-31'
-      return ad.localeCompare(bd)
+      return (a.next?.scheduled_date ?? '9999-12-31').localeCompare(b.next?.scheduled_date ?? '9999-12-31')
+    }
+
+    const val = (r: SeqRow): string | number => {
+      switch (sortKey) {
+        case 'lead': return (r.lead ? displayName(r.lead) : r.seq.lead_record_id).toLowerCase()
+        case 'stage': return (r.lead?.stage ?? '').toLowerCase()
+        // Ratio rather than raw count, so leads with different channel totals compare fairly.
+        case 'progress': return r.totalChannels ? r.doneChannels / r.totalChannels : 0
+        case 'due': return r.next?.scheduled_date ?? '9999-12-31'
+        case 'email': return r.effEmail.toLowerCase()
+        case 'status': return r.statusLabel.toLowerCase()
+        default: return 0
+      }
+    }
+
+    return [...filtered].sort((a, b) => {
+      if (sortKey === 'urgency') return urgency(a, b) * sortDir
+      const va = val(a), vb = val(b)
+      if (va < vb) return -sortDir
+      if (va > vb) return sortDir
+      return urgency(a, b)   // stable, useful tie-break
     })
-  }, [sequences, filter, q, leadMap, stepsBySeq])
+  }, [allRows, q, fStatus, fDue, fStage, fWeek, fEmail, dueFrom, dueTo, sortKey, sortDir])
+
+  const filtersOn = !!(q.trim() || fDue.length || fStage.length || fWeek.length || fEmail.length || dueFrom || dueTo
+    || fStatus.length !== 2 || !fStatus.includes('Active') || !fStatus.includes('Awaiting decision'))
+
+  const clearFilters = () => {
+    setQ(''); setFStatus(['Active', 'Awaiting decision']); setFDue([]); setFStage([])
+    setFWeek([]); setFEmail([]); setDueFrom(''); setDueTo('')
+  }
+
+  const setSort = (k: string) => {
+    if (sortKey === k) setSortDir((d) => -d)
+    else { setSortKey(k); setSortDir(k === 'urgency' ? 1 : 1) }
+  }
+  const sortMark = (k: string) => (sortKey === k ? (sortDir === 1 ? ' ▲' : ' ▼') : '')
 
   const dueCount = useMemo(() =>
     steps.filter((s) => {
@@ -165,13 +277,29 @@ export default function FollowUps() {
             {dueCount} overdue / due today
           </span>
         )}
-        <span className="small muted">{rows.length} lead{rows.length === 1 ? '' : 's'}</span>
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
-          <input type="text" placeholder="Search name, practice, email…" value={q}
-                 onChange={(e) => setQ(e.target.value)} style={{ width: 220, fontSize: 12.5 }} />
-          <button className={'btn' + (filter === 'active' ? '' : ' ghost')} onClick={() => setFilter('active')}>Active</button>
-          <button className={'btn' + (filter === 'all' ? '' : ' ghost')} onClick={() => setFilter('all')}>All</button>
-        </div>
+        <span className="small muted">
+          {rows.length}{filtersOn && rows.length !== allRows.length ? ` of ${allRows.length}` : ''} lead{rows.length === 1 ? '' : 's'}
+        </span>
+      </div>
+
+      <div className="controls filters">
+        <input type="text" placeholder="Search name, practice, email…" value={q}
+               onChange={(e) => setQ(e.target.value)} style={{ width: 210 }} />
+        <MultiSelect label="Status" options={STATUS_LABELS as unknown as string[]} selected={fStatus} onChange={setFStatus} />
+        <MultiSelect label="Due" options={DUE_STATES as unknown as string[]} selected={fDue} onChange={setFDue} />
+        <MultiSelect label="Stage" options={stageOpts} selected={fStage} onChange={setFStage} />
+        <MultiSelect label="Next week" options={WEEKS} selected={fWeek} onChange={setFWeek} />
+        <MultiSelect label="Reminder to" options={emailOpts} selected={fEmail} onChange={setFEmail} />
+        <span className="datef small muted">
+          Due from <input type="date" value={dueFrom} onChange={(e) => setDueFrom(e.target.value)} />
+        </span>
+        <span className="datef small muted">
+          to <input type="date" value={dueTo} onChange={(e) => setDueTo(e.target.value)} />
+        </span>
+        <button className="btn ghost" onClick={clearFilters} disabled={!filtersOn}>Clear filters</button>
+        <span className="small muted" style={{ marginLeft: 'auto' }}>
+          Sorted by <b>{SORTS.find((s) => s.key === sortKey)?.label}</b>{sortDir === 1 ? ' ▲' : ' ▼'}
+        </span>
       </div>
 
       {followUpError && (
@@ -204,9 +332,11 @@ export default function FollowUps() {
       {rows.length === 0 ? (
         <div className="card" style={{ textAlign: 'center', padding: 40 }}>
           <p className="muted">
-            {q.trim() ? 'No leads match that search.' : `No ${filter === 'active' ? 'active ' : ''}follow-up sequences.`}
+            {filtersOn ? 'No leads match these filters.' : 'No follow-up sequences.'}
           </p>
-          {!q.trim() && <p className="small muted">Sequences are created automatically for every lead that reaches <b>Negotiation</b> stage.</p>}
+          {filtersOn
+            ? <button className="btn ghost" onClick={clearFilters}>Clear filters</button>
+            : <p className="small muted">Sequences are created automatically for every lead that reaches the workspace's follow-up stage.</p>}
         </div>
       ) : (
         <div className="card" style={{ padding: 0 }}>
@@ -214,13 +344,14 @@ export default function FollowUps() {
             <table>
               <thead>
                 <tr>
-                  <th style={{ width: 30 }}></th>
-                  <th>Lead</th>
-                  <th style={{ width: 96 }}>Stage</th>
-                  <th style={{ width: 150 }}>Progress</th>
-                  <th style={{ width: 150 }}>Next due</th>
-                  <th style={{ width: 230 }}>Reminder email</th>
-                  <th style={{ width: 130 }}>Status</th>
+                  <th style={{ width: 30 }} className="sortable" title="Sort by priority: most overdue first"
+                      onClick={() => setSort('urgency')}>{sortKey === 'urgency' ? (sortDir === 1 ? '▲' : '▼') : '⇅'}</th>
+                  <th className="sortable" onClick={() => setSort('lead')}>Lead{sortMark('lead')}</th>
+                  <th style={{ width: 96 }} className="sortable" onClick={() => setSort('stage')}>Stage{sortMark('stage')}</th>
+                  <th style={{ width: 150 }} className="sortable" onClick={() => setSort('progress')}>Progress{sortMark('progress')}</th>
+                  <th style={{ width: 150 }} className="sortable" onClick={() => setSort('due')}>Next due{sortMark('due')}</th>
+                  <th style={{ width: 230 }} className="sortable" onClick={() => setSort('email')}>Reminder email{sortMark('email')}</th>
+                  <th style={{ width: 130 }} className="sortable" onClick={() => setSort('status')}>Status{sortMark('status')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -228,7 +359,7 @@ export default function FollowUps() {
                   const { seq, lead, steps: sSteps, next, overdueDays, finished } = r
                   const name = lead ? displayName(lead) : seq.lead_record_id
                   const practice = lead?.practice ?? null
-                  const effEmail = effectiveEmail(seq, managerEmail)
+                  const effEmail = r.effEmail
                   const isOverride = (seq.manager_email ?? '').trim() !== ''
                   const isOpen = open.has(seq.id)
                   const dueToday = next ? isDueToday(next) : false

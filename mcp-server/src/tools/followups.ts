@@ -10,10 +10,14 @@ import {
   type FollowUpSequence, type FollowUpStep, type Lead,
 } from '../domain.js'
 import { WORKSPACE } from '../filters.js'
-import { ResponseFormat, RESPONSE_FORMAT, fitToBudget, json, safeText, sanitiseForStorage, table, text } from '../format.js'
+import {
+  ResponseFormat, RESPONSE_FORMAT, UNTRUSTED_NOTE, fitToBudget, json, safeText,
+  sanitiseForStorage, table, text,
+} from '../format.js'
 import {
   createSequence, fetchLeads, fetchSequences, fetchStepsFor, markSequenceStatus,
-  provisionSequences, setStepChannels, updateLeadStageAndStatus, updateSequenceEmail, updateStepDate,
+  provisionSequences, setStepChannels, updateLeadStageAndStatus, updateSequenceEmail,
+  updateSequenceNotes, updateStepDate, updateStepNotes,
 } from '../repo.js'
 import { guard, guardWrite, workspace } from './common.js'
 import { settings } from '../supabase.js'
@@ -89,7 +93,10 @@ Set include_steps=true to see all five weeks per lead rather than just the next 
         state: z.enum(['any', 'active', 'overdue', 'due_today', 'scheduled', 'awaiting_decision', 'won', 'lost'])
           .default('active').describe('Which sequences to include.'),
         record_id: z.string().max(200).optional().describe('Only the sequence for this lead.'),
-        query: z.string().max(200).optional().describe('Free text matched against lead name, practice and reminder email.'),
+        query: z.string().max(200).optional()
+          .describe('Free text matched against lead name, practice, reminder email and the notes.'),
+        with_notes: z.boolean().optional()
+          .describe('true keeps only sequences that have a note; false keeps only those without.'),
         include_steps: z.boolean().default(false).describe('Include all five weeks per sequence, not just the next one.'),
         sort: z.enum(['urgency', 'due_date', 'name', 'value']).default('urgency')
           .describe('"urgency" puts the most overdue first and resolved sequences last.'),
@@ -108,8 +115,14 @@ Set include_steps=true to see all five weeks per lead rather than just the next 
       if (a.query) {
         const q = a.query.toLowerCase()
         rows = rows.filter((r) =>
-          [r.lead ? displayName(r.lead) : r.seq.lead_record_id, r.lead?.practice ?? '', r.email]
+          [r.lead ? displayName(r.lead) : r.seq.lead_record_id, r.lead?.practice ?? '', r.email,
+           r.seq.notes ?? '', r.steps.map((s) => s.notes ?? '').join(' ')]
             .join(' ').toLowerCase().includes(q))
+      }
+      if (a.with_notes !== undefined) {
+        const has = (r: Row): boolean =>
+          !!(r.seq.notes ?? '').trim() || r.steps.some((s) => (s.notes ?? '').trim())
+        rows = rows.filter((r) => has(r) === a.with_notes)
       }
       if (a.state !== 'any') {
         rows = rows.filter((r) => {
@@ -170,6 +183,10 @@ Set include_steps=true to see all five weeks per lead rather than just the next 
             progress_pct: r.totalChannels ? Math.round((r.doneChannels / r.totalChannels) * 100) : 0,
             reminder_email: r.email || null,
             reminder_email_source: (r.seq.manager_email ?? '').trim() ? 'per-lead override' : 'workspace default',
+            notes: safeText(r.seq.notes, 2000) || null,
+            week_notes: r.steps
+              .filter((s) => (s.notes ?? '').trim())
+              .map((s) => ({ week: s.step_number, note: safeText(s.notes, 1000) })),
             started_at: r.seq.started_at,
             ...(a.include_steps ? {
               weeks: r.steps.map((s) => ({
@@ -180,6 +197,7 @@ Set include_steps=true to see all five weeks per lead rather than just the next 
                 completed_channels: s.completed_channels ?? [],
                 outstanding: pendingChannels(s),
                 done: stepComplete(s),
+                note: safeText(s.notes, 1000) || null,
               })),
             } : {}),
           })),
@@ -191,8 +209,10 @@ Set include_steps=true to see all five weeks per lead rather than just the next 
           `${total} sequence(s) in state "${a.state}"; showing ${slice.length} from offset ${a.offset}.`,
           `Default reminder email: ${managerEmail || '**not set**'}`,
           '',
+          UNTRUSTED_NOTE,
+          '',
           table(
-            ['Lead', 'Stage', 'State', 'Week', 'Due', 'Overdue', 'Still owed', 'Progress', 'record_id'],
+            ['Lead', 'Stage', 'State', 'Week', 'Due', 'Overdue', 'Still owed', 'Progress', 'Notes', 'record_id'],
             slice.map((r) => [
               safeText(r.lead ? displayName(r.lead) : r.seq.lead_record_id, 44),
               r.lead?.stage ?? '-',
@@ -202,23 +222,30 @@ Set include_steps=true to see all five weeks per lead rather than just the next 
               r.overdueDays ? `${r.overdueDays}d` : '-',
               r.next ? pendingChannels(r.next).join(', ') || '-' : '-',
               `${r.doneChannels}/${r.totalChannels}`,
+              // Newlines would break the row apart, so a multi-line note is
+              // flattened here; include_steps shows it in full.
+              safeText((r.seq.notes ?? '').replace(/\s*\n\s*/g, ' / '), 90) || '-',
               `\`${r.seq.lead_record_id}\``,
             ]),
-            ['l', 'l', 'l', 'r', 'l', 'r', 'l', 'r', 'l'],
+            ['l', 'l', 'l', 'r', 'l', 'r', 'l', 'r', 'l', 'l'],
           ),
         ]
         if (a.include_steps) {
           for (const r of slice) {
             lines.push('', `### ${safeText(r.lead ? displayName(r.lead) : r.seq.lead_record_id, 80)} — ${r.email || 'no reminder email'}`)
+            if ((r.seq.notes ?? '').trim()) {
+              lines.push('', safeText(r.seq.notes, 2000), '')
+            }
             lines.push(table(
-              ['Week', 'Due', 'Channels', 'Done', 'Outstanding', 'step_id'],
+              ['Week', 'Due', 'Channels', 'Done', 'Outstanding', 'Note', 'step_id'],
               r.steps.map((s) => [
                 s.step_number, s.scheduled_date, s.channels.join(', '),
                 (s.completed_channels ?? []).join(', ') || '-',
                 pendingChannels(s).join(', ') || '-',
+                safeText((s.notes ?? '').replace(/\s*\n\s*/g, ' / '), 90) || '-',
                 `\`${s.id}\``,
               ]),
-              ['r', 'l', 'l', 'l', 'l', 'l'],
+              ['r', 'l', 'l', 'l', 'l', 'l', 'l'],
             ))
           }
         }
@@ -227,8 +254,18 @@ Set include_steps=true to see all five weeks per lead rather than just the next 
       }
 
       if (!total) {
-        return text(`No follow-up sequences in ${project.name} match state "${a.state}".` +
-          (project.follow_up_stage ? ` Leads are enrolled when they reach "${project.follow_up_stage}".` : ' Follow-ups are disabled for this workspace.'))
+        // A caller that asked for JSON gets JSON even when nothing matched:
+        // returning prose here would break anything parsing the result.
+        const why = project.follow_up_stage
+          ? `Leads are enrolled when they reach "${project.follow_up_stage}".`
+          : 'Follow-ups are disabled for this workspace.'
+        if (a.response_format === ResponseFormat.JSON) {
+          return json({
+            workspace: project.id, state: a.state, reminder_email_default: managerEmail || null,
+            total: 0, count: 0, offset: a.offset, has_more: false, sequences: [], note: why,
+          })
+        }
+        return text(`No follow-up sequences in ${project.name} match state "${a.state}". ${why}`)
       }
       const fitted = fitToBudget(page, render)
       if (a.response_format === ResponseFormat.JSON) {
@@ -252,17 +289,20 @@ Actions:
   - "complete_channel" — tick channels off a week. Pass \`channels\` as the complete list done so far for that week, not just the new one. The week counts as finished only when every channel on it is ticked.
   - "reschedule" — move one week's due date.
   - "set_email" — override the reminder recipient for this lead, or clear it back to the workspace default.
+  - "set_notes" — write the note shown in the Follow-Ups table's Notes column. Without \`week\` it is the note for the whole follow-up ("decision maker away until the 14th"); with \`week\` it is the note against that one week ("left voicemail"). Pass an empty string to clear it. The note replaces what is there, so include anything worth keeping.
   - "close" — mark the sequence won or lost. With \`update_lead=true\` a "lost" close also moves the lead to the workspace's lost stage.
 
 Identify the sequence by \`record_id\` (the lead) and the week by \`week\` (1-5). Use leads_followups first to see the current state.`,
       inputSchema: z.strictObject({
         workspace: WORKSPACE,
-        action: z.enum(['start', 'provision', 'complete_channel', 'reschedule', 'set_email', 'close'])
+        action: z.enum(['start', 'provision', 'complete_channel', 'reschedule', 'set_email', 'set_notes', 'close'])
           .describe('What to do.'),
         record_id: z.string().max(200).optional()
           .describe('The lead. Required for every action except "provision".'),
         week: z.number().int().min(1).max(5).optional()
-          .describe('Week number, for "complete_channel" and "reschedule".'),
+          .describe('Week number, for "complete_channel" and "reschedule", and optionally for "set_notes".'),
+        notes: z.string().max(4000).optional()
+          .describe('For "set_notes": the note text. An empty string clears it.'),
         channels: z.array(z.enum(ALL_CHANNELS)).max(4).optional()
           .describe('For "complete_channel": every channel completed for that week so far. An empty array un-ticks the week.'),
         date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional()
@@ -382,6 +422,35 @@ Identify the sequence by \`record_id\` (the lead) and the week by \`week\` (1-5)
               value
                 ? `Reminders for **${safeText(r.lead ? displayName(r.lead) : r.seq.lead_record_id, 60)}** now go to ${value}.`
                 : `Cleared the override — reminders fall back to the workspace default (${managerEmail || 'not set'}).`,
+            )
+          }
+
+          case 'set_notes': {
+            const r = find()
+            if (a.notes === undefined) throw new Error('action "set_notes" needs notes (an empty string clears it).')
+            // Empty saves as null, so "no note" is one value in the database
+            // rather than two that look identical on screen.
+            const value = sanitiseForStorage(a.notes).trim() || null
+            const who = safeText(r.lead ? displayName(r.lead) : r.seq.lead_record_id, 60)
+
+            if (a.week !== undefined) {
+              const step = r.steps.find((s) => s.step_number === a.week)
+              if (!step) throw new Error(`That sequence has no week ${a.week}.`)
+              await updateStepNotes(step.id, value)
+              return say(
+                { record_id: r.seq.lead_record_id, week: a.week, notes: value },
+                value
+                  ? `Week ${a.week} note for **${who}**: ${safeText(value, 300)}`
+                  : `Cleared the week ${a.week} note for **${who}**.`,
+              )
+            }
+
+            await updateSequenceNotes(r.seq.id, value)
+            return say(
+              { record_id: r.seq.lead_record_id, notes: value },
+              value
+                ? `Note for **${who}**: ${safeText(value, 300)}`
+                : `Cleared the follow-up note for **${who}**.`,
             )
           }
 

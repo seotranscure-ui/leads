@@ -207,3 +207,10 @@ tr.fup-steprow>td{background:var(--brand-soft);border-bottom:1px solid var(--bra
 tbody tr.fup-steprow:hover>td{background:var(--brand-soft2)}
 /* one pill per week, colored by that week's state */
 .fup-week-pill{display:inline-block;width:17px;height:7px;border-radius:4px}
+/* The Notes cell reads as editable before you click it, and a long note is
+   clamped to three lines so one talkative row cannot stretch the whole table. */
+.fup-note-cell{cursor:text;min-height:22px;padding:3px 5px;margin:-3px -5px;border-radius:6px;border:1px solid transparent;transition:.12s}
+.fup-note-cell:hover{border-color:var(--line);background:#fff}
+.fup-note-cell>span{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+tr.fup-steprow input[type=text]{border:1px solid var(--line);border-radius:6px;padding:3px 7px;font-family:inherit;background:#fff}
+tr.fup-steprow input[type=text]:disabled{background:transparent;border-color:transparent}

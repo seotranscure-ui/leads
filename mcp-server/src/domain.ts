@@ -229,6 +229,12 @@ export interface FollowUpSequence {
   started_by: string | null
   status: 'active' | 'won' | 'lost'
   created_at: string
+  /**
+   * A note about this lead's follow-up as a whole, as opposed to
+   * FollowUpStep.notes which belongs to one week. Optional because a database
+   * without migration 008 simply does not return it.
+   */
+  notes?: string | null
 }
 
 export interface FollowUpStep {

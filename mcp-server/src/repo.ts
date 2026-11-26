@@ -453,6 +453,28 @@ export async function updateSequenceEmail(sequenceId: string, email: string | nu
   if (error) fail(error, 'follow_up_sequences')
 }
 
+/** A note about the whole sequence. null clears it. */
+export async function updateSequenceNotes(sequenceId: string, notes: string | null): Promise<void> {
+  const sb = await client()
+  const { error } = await sb.from('follow_up_sequences').update({ notes }).eq('id', sequenceId)
+  if (error) {
+    if (isMissingColumn(error)) {
+      throw new RepoError(
+        'Sequence notes are not available in this database yet.',
+        'apply app/supabase/migrations/008_follow_up_notes.sql',
+      )
+    }
+    fail(error, 'follow_up_sequences')
+  }
+}
+
+/** A note against one week of a sequence. null clears it. */
+export async function updateStepNotes(stepId: string, notes: string | null): Promise<void> {
+  const sb = await client()
+  const { error } = await sb.from('follow_up_steps').update({ notes }).eq('id', stepId)
+  if (error) fail(error, 'follow_up_steps')
+}
+
 // ── reminders ────────────────────────────────────────────────────────────────
 
 export interface ReminderLog {

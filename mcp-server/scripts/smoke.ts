@@ -182,6 +182,39 @@ async function main(): Promise<void> {
     ])
     pass('leads_insights finds the unmapped status and the overdue follow-up')
 
+    // Notes: readable on the board, writable through the manage tool.
+    const board = await call('leads_followups', { include_steps: true, response_format: 'json' })
+    const seq = (board.structuredContent as { sequences: Record<string, unknown>[] }).sequences[0]
+    assert.equal(seq.notes, 'Decision maker away until the 14th')
+    assert.deepEqual(seq.week_notes, [{ week: 2, note: 'Left voicemail Tuesday' }])
+    const weeks = seq.weeks as { week: number; note: string | null }[]
+    assert.equal(weeks.find((w) => w.week === 2)?.note, 'Left voicemail Tuesday')
+    assert.equal(weeks.find((w) => w.week === 1)?.note, null)
+
+    const md = await call('leads_followups')
+    assert.match(JSON.stringify(md.content), /Decision maker away/, 'the markdown board shows the note')
+
+    const byNote = await call('leads_followups', { query: 'voicemail', response_format: 'json' })
+    assert.equal((byNote.structuredContent as { total: number }).total, 1, 'search covers week notes')
+    const without = await call('leads_followups', { with_notes: false, response_format: 'json' })
+    assert.equal((without.structuredContent as { total: number }).total, 0)
+
+    WRITES.length = 0
+    await call('leads_manage_followup', { action: 'set_notes', record_id: 'l3', notes: '  Call back Monday  ' })
+    const seqNote = WRITES.find((w) => w.table === 'follow_up_sequences')!.body as Record<string, unknown>
+    assert.equal(seqNote.notes, 'Call back Monday', 'trimmed before saving')
+
+    WRITES.length = 0
+    await call('leads_manage_followup', { action: 'set_notes', record_id: 'l3', week: 2, notes: 'Spoke to them' })
+    const stepNote = WRITES.find((w) => w.table === 'follow_up_steps')!.body as Record<string, unknown>
+    assert.equal(stepNote.notes, 'Spoke to them', 'a week note goes to the step, not the sequence')
+
+    WRITES.length = 0
+    await call('leads_manage_followup', { action: 'set_notes', record_id: 'l3', notes: '   ' })
+    const cleared = WRITES.find((w) => w.table === 'follow_up_sequences')!.body as Record<string, unknown>
+    assert.equal(cleared.notes, null, 'a blank note saves as null, not an empty string')
+    pass('follow-up notes read back on the board and write to the right row')
+
     // Destructive tools must not act on the first call.
     const beforeWrites = WRITES.length
     const unconfirmed = await c.callTool({ name: 'leads_delete', arguments: { record_id: 'l1' } })

@@ -220,7 +220,14 @@ Use leads_metrics for counts and totals instead of listing everything, and leads
       }
 
       if (!total) {
-        return text(`No leads in ${project.name} match ${describeFilters(a)}. Widen the filters, or check leads_list_workspaces for the right workspace.`)
+        const why = 'Widen the filters, or check leads_list_workspaces for the right workspace.'
+        if (a.response_format === ResponseFormat.JSON) {
+          return json({
+            workspace: project.id, filters: describeFilters(a),
+            total: 0, count: 0, offset: a.offset, has_more: false, leads: [], note: why,
+          })
+        }
+        return text(`No leads in ${project.name} match ${describeFilters(a)}. ${why}`)
       }
 
       const fitted = fitToBudget(page, render)

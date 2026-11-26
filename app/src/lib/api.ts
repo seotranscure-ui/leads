@@ -483,6 +483,28 @@ export async function updateSequenceEmail(sequenceId: string, email: string | nu
   if (error) throw error
 }
 
+/**
+ * A note about the whole sequence. Pass null to clear it.
+ *
+ * Names the migration if the column is missing, because "column notes does not
+ * exist" on its own sends people looking in the wrong place.
+ */
+export async function updateSequenceNotes(sequenceId: string, notes: string | null): Promise<void> {
+  const { error } = await supabase.from('follow_up_sequences').update({ notes }).eq('id', sequenceId)
+  if (error) {
+    if (isMissingColumn(error)) {
+      throw new Error('Notes need migration 008_follow_up_notes.sql — run it in the Supabase SQL editor.')
+    }
+    throw error
+  }
+}
+
+/** A note against one week of a sequence. Pass null to clear it. */
+export async function updateStepNotes(stepId: string, notes: string | null): Promise<void> {
+  const { error } = await supabase.from('follow_up_steps').update({ notes }).eq('id', stepId)
+  if (error) throw error
+}
+
 export async function updateLeadStageAndStatus(recordId: string, status: string, stage: string): Promise<void> {
   const { error } = await supabase.from('leads').update({ status, stage }).eq('record_id', recordId)
   if (error) throw error

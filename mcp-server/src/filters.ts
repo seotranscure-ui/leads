@@ -79,7 +79,7 @@ export function applyFilters(leads: Lead[], f: Filters, funnel: FunnelConfig, ru
       case 'won': if (!isWonIn(funnel, l.stage)) return false; break
       case 'lost': if (!isLostIn(funnel, l.stage)) return false; break
       case 'open': if (isWonIn(funnel, l.stage) || isLostIn(funnel, l.stage)) return false; break
-      case 'reached_demo': if (!isDemoIn(funnel, l.stage)) return false; break
+      case 'reached_demo': if (!isDemoIn(funnel, l.stage, l.status)) return false; break
       default: break
     }
 

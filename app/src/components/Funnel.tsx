@@ -25,7 +25,7 @@ export default function Funnel() {
   funnel.stages.forEach((st) => { counts[st.name] = 0 })
   all.forEach((l) => { counts[l.stage] = (counts[l.stage] ?? 0) + 1 })
   const max = Math.max(1, ...Object.values(counts))
-  const demos = all.filter((l) => isDemoIn(funnel, l.stage)).length
+  const demos = all.filter((l) => isDemoIn(funnel, l.stage, l.status)).length
   const sales = all.filter((l) => isWonIn(funnel, l.stage)).length
   const ht = all.filter((l) => isHigh(l, rule)).length
 
@@ -60,7 +60,8 @@ export default function Funnel() {
           ))}
           <p className="small muted" style={{ marginTop: 10 }}>
             A lead counts as a <b>Demo</b> once it reaches{' '}
-            <b>{funnel.stages.filter((s) => s.reachedDemo).map((s) => s.name).join(', ') || '—'}</b>.
+            <b>{funnel.stages.filter((s) => s.reachedDemo).map((s) => s.name).join(', ') || '—'}</b>
+            {funnel.demoStatuses?.length ? <>, or has status <b>{funnel.demoStatuses.join(', ')}</b></> : null}.
             Stages are configured per workspace in <b>Admin</b>.
           </p>
         </div>

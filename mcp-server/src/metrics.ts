@@ -42,7 +42,7 @@ export function accumulate(a: Agg, l: Lead, ctx: Ctx): void {
   const lost = isLostIn(ctx.funnel, l.stage)
   const rev = leadRevenue(l, ctx.chargePct)
   a.leads++
-  if (isDemoIn(ctx.funnel, l.stage)) a.demos++
+  if (isDemoIn(ctx.funnel, l.stage, l.status)) a.demos++
   if (isHigh(l, ctx.rule)) a.highTicket++
   if (won) {
     a.sales++
@@ -96,7 +96,7 @@ export function monthlyStats(leads: Lead[], ctx: Ctx): MonthRow[] {
     const created = monthKeyOf(l.created_utc)
     const cb = bucket(created.key, created.label)
     cb.leads++
-    if (isDemoIn(ctx.funnel, l.stage)) cb.demos++
+    if (isDemoIn(ctx.funnel, l.stage, l.status)) cb.demos++
     if (isHigh(l, ctx.rule)) cb.highTicket++
     const won = isWonIn(ctx.funnel, l.stage)
     const lost = isLostIn(ctx.funnel, l.stage)

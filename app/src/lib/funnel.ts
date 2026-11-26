@@ -26,6 +26,7 @@ const STATUS_MAP: Record<string, Stage> = {
   'contract sent': 'Negotiation',
   'won lead': 'Won',
   'won': 'Won',
+  'lost': 'Lost',
   'lost lead': 'Lost',
   'lost / contract lead': 'Lost',
   'not-qualified': 'Lost',

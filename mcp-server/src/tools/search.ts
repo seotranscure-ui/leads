@@ -115,7 +115,7 @@ Use leads_metrics for counts and totals instead of listing everything, and leads
           tag: lead.tag,
           physicians: lead.physicians,
           phase: lead.phase,
-          reached_demo: isDemoIn(ctx.funnel, lead.stage),
+          reached_demo: isDemoIn(ctx.funnel, lead.stage, lead.status),
           won: isWonIn(ctx.funnel, lead.stage),
           lost: isLostIn(ctx.funnel, lead.stage),
           revenue_month: lead.manual_revenue_month || monthKeyOf(lead.created_utc).key,

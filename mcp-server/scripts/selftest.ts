@@ -80,6 +80,37 @@ check('an unknown status falls back to the first stage and is reported as unmapp
   assert.equal(isUnmappedStatus(funnel, ''), false)
 })
 
+check('demoStatuses count toward Demos without moving the lead off its stage', () => {
+  // A lead lost after a demo still had the demo. The app counts it; the MCP
+  // server must agree or its numbers drift from the dashboard.
+  const withLost: FunnelConfig = { ...funnel, demoStatuses: ['lost lead', 'lost'] }
+  assert.equal(isDemoIn(withLost, 'Lost', 'Lost Lead'), true, 'case-insensitive, whatever the stage')
+  assert.equal(isDemoIn(withLost, 'Lost', '  lost  '), true, 'trimmed')
+  assert.equal(isDemoIn(withLost, 'Lost', 'junk lead'), false, 'a status not listed does not count')
+  assert.equal(isDemoIn(withLost, 'Lost', null), false)
+  assert.equal(isDemoIn(withLost, 'Lost'), false, 'omitting the status falls back to the stage flag')
+  // The stage flag still wins on its own, and the lead stays on Lost.
+  assert.equal(isDemoIn(withLost, 'Demo', 'anything'), true)
+  assert.equal(isLostIn(withLost, 'Lost'), true, 'counting as a demo must not stop it being lost')
+  // A funnel without the field behaves exactly as before.
+  assert.equal(isDemoIn(funnel, 'Lost', 'lost lead'), false)
+})
+
+check('a demoStatuses lead is counted once, as both demo and lost', () => {
+  const withLost: FunnelConfig = { ...funnel, demoStatuses: ['lost lead'] }
+  const ctxLost: Ctx = { ...ctx, funnel: withLost }
+  const pop = [
+    lead({ record_id: 'a', stage: 'Lost', status: 'Lost Lead', monthly_collections: 10000 }),
+    lead({ record_id: 'b', stage: 'Demo', status: 'demo scheduled' }),
+  ]
+  const a = aggregate(pop, ctxLost)
+  assert.equal(a.leads, 2)
+  assert.equal(a.demos, 2, 'both reached a demo')
+  assert.equal(a.lost, 1, 'the lost one is still lost')
+  assert.equal(a.open, 1, 'and is not double-counted as open')
+  assert.equal(a.sales + a.lost + a.open, a.leads)
+})
+
 check('stage flags drive demo / won / lost rather than position', () => {
   assert.equal(isDemoIn(funnel, 'Demo'), true)
   assert.equal(isDemoIn(funnel, 'Engaged'), false)

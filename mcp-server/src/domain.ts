@@ -127,7 +127,15 @@ export interface FunnelStage {
   lost: boolean
   statuses: string[]
 }
-export interface FunnelConfig { stages: FunnelStage[] }
+export interface FunnelConfig {
+  stages: FunnelStage[]
+  /**
+   * CRM statuses (lowercased) that count toward Demos even though their stage
+   * is not demo-reached — a lead lost after a demo still had the demo. They
+   * stay on their own stage; only the Demos count changes.
+   */
+  demoStatuses?: string[]
+}
 
 export interface Automation {
   enabled: boolean
@@ -171,7 +179,18 @@ export function isUnmappedStatus(f: FunnelConfig, status: string | null | undefi
   return !f.stages.some((s) => s.statuses.includes(key))
 }
 
-export const isDemoIn = (f: FunnelConfig, stage: string): boolean => stageByName(f, stage)?.reachedDemo ?? false
+/**
+ * Did this lead reach the demo milestone?
+ *
+ * Either its stage is flagged demo-reached, or its CRM status is one the
+ * workspace lists in `demoStatuses`. Takes the status rather than inferring it
+ * so a lead lost after a demo still counts, which is what the dashboard does.
+ */
+export function isDemoIn(f: FunnelConfig, stage: string, status?: string | null): boolean {
+  if (stageByName(f, stage)?.reachedDemo) return true
+  const key = (status || '').trim().toLowerCase()
+  return !!key && (f.demoStatuses ?? []).includes(key)
+}
 export const isWonIn = (f: FunnelConfig, stage: string): boolean => stageByName(f, stage)?.won ?? false
 export const isLostIn = (f: FunnelConfig, stage: string): boolean => stageByName(f, stage)?.lost ?? false
 export const lostStageName = (f: FunnelConfig): string => f.stages.find((s) => s.lost)?.name ?? 'Lost'

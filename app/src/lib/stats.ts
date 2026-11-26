@@ -39,7 +39,7 @@ export function monthlyStats(leads: Lead[], rule: HighTicketRule, opts?: Monthly
     if (!opts?.createdIn || opts.createdIn(l)) {
       const cb = bucket(created.key, created.label)
       cb.leads++
-      if (isDemoIn(funnel, l.stage)) cb.demos++
+      if (isDemoIn(funnel, l.stage, l.status)) cb.demos++
       if (isHigh(l, rule)) cb.ht++
     }
     // The win (sale + collections + revenue) is recognized in the revenue month (default: created month).

@@ -4,6 +4,7 @@ import {
   fetchSequences, fetchStepsFor, createSequence as apiCreateSequence,
   markStepDone as apiMarkStepDone, updateStepDate as apiUpdateStepDate,
   markSequenceStatus, updateSequenceEmail as apiUpdateSeqEmail,
+  updateSequenceNotes as apiUpdateSeqNotes, updateStepNotes as apiUpdateStepNotes,
   updateLeadStageAndStatus, provisionSequences,
   setStepChannels as apiSetStepChannels,
   fetchProjects, saveProject,
@@ -57,6 +58,10 @@ interface AppCtx {
   rescheduleStep: (stepId: string, date: string) => Promise<void>
   resolveSequence: (sequenceId: string, outcome: 'won' | 'lost', leadRecordId: string) => Promise<void>
   changeSequenceEmail: (sequenceId: string, email: string | null) => Promise<void>
+  /** A note about the whole follow-up; null clears it. */
+  changeSequenceNotes: (sequenceId: string, notes: string | null) => Promise<void>
+  /** A note against one week; null clears it. */
+  changeStepNotes: (stepId: string, notes: string | null) => Promise<void>
   refreshSequences: () => Promise<void>
 }
 
@@ -269,6 +274,30 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     await apiUpdateSeqEmail(sequenceId, email)
   }
 
+  // Both note writers update optimistically and roll back by refetching, so a
+  // failed save cannot leave the table showing text the database never took.
+  const changeSequenceNotes: AppCtx['changeSequenceNotes'] = async (sequenceId, notes) => {
+    const before = sequences
+    setSequences((prev) => prev.map((s) => s.id === sequenceId ? { ...s, notes } : s))
+    try {
+      await apiUpdateSeqNotes(sequenceId, notes)
+    } catch (e) {
+      setSequences(before)
+      throw e
+    }
+  }
+
+  const changeStepNotes: AppCtx['changeStepNotes'] = async (stepId, notes) => {
+    const before = steps
+    setSteps((prev) => prev.map((s) => s.id === stepId ? { ...s, notes } : s))
+    try {
+      await apiUpdateStepNotes(stepId, notes)
+    } catch (e) {
+      setSteps(before)
+      throw e
+    }
+  }
+
   return (
     <Ctx.Provider value={{
       projects, project, projectId: project.id, setProjectId, funnel, updateProject,
@@ -278,7 +307,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       sequences, steps, followUpError, managerEmail, updateManagerEmail,
       automation, updateAutomation, toggleChannel,
       startFollowUp, completeStep, rescheduleStep, resolveSequence,
-      changeSequenceEmail, refreshSequences,
+      changeSequenceEmail, changeSequenceNotes, changeStepNotes, refreshSequences,
     }}>
       {children}
     </Ctx.Provider>

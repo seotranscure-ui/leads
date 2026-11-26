@@ -26,6 +26,9 @@ interface SeqRow {
   dueState: DueState
   statusLabel: StatusLabel
   effEmail: string
+  /** The sequence note, plus any week notes, flattened once for search and sort. */
+  note: string
+  weekNotes: string
 }
 
 type DueState = 'Overdue' | 'Due today' | 'Upcoming' | 'Complete'
@@ -42,6 +45,7 @@ const SORTS = [
   { key: 'progress', label: 'Progress' },
   { key: 'due', label: 'Next due' },
   { key: 'email', label: 'Reminder email' },
+  { key: 'notes', label: 'Notes' },
   { key: 'status', label: 'Status' },
 ] as const
 
@@ -72,6 +76,7 @@ function followUpExportRow(r: SeqRow): Record<string, unknown> {
     'Progress %': r.totalChannels ? Math.round((r.doneChannels / r.totalChannels) * 100) : 0,
     'Reminder email': r.effEmail,
     'Email source': (r.seq.manager_email ?? '').trim() ? 'custom' : 'default',
+    Notes: r.note,
     Started: (r.seq.started_at ?? '').slice(0, 10),
   }
   // Fixed Week 1..5 columns regardless of how many steps a sequence has, so
@@ -80,6 +85,7 @@ function followUpExportRow(r: SeqRow): Record<string, unknown> {
     const step = r.steps.find((s) => s.step_number === n)
     row[`Week ${n} due`] = step?.scheduled_date ?? ''
     row[`Week ${n} outstanding`] = step ? pendingChannels(step).join(', ') : ''
+    row[`Week ${n} note`] = step?.notes ?? ''
   }
   return row
 }
@@ -88,6 +94,7 @@ export default function FollowUps() {
   const {
     leads, sequences, steps, followUpError, managerEmail, automation, project,
     toggleChannel, completeStep, rescheduleStep, resolveSequence, changeSequenceEmail,
+    changeSequenceNotes, changeStepNotes,
   } = useAppData()
   const nav = useNavigate()
 
@@ -99,6 +106,7 @@ export default function FollowUps() {
   const [fStage, setFStage] = useState<string[]>([])
   const [fWeek, setFWeek] = useState<string[]>([])
   const [fEmail, setFEmail] = useState<string[]>([])
+  const [fNotes, setFNotes] = useState<string[]>([])
   const [dueFrom, setDueFrom] = useState('')
   const [dueTo, setDueTo] = useState('')
   const [q, setQ] = useState('')
@@ -108,6 +116,8 @@ export default function FollowUps() {
   const [resolving, setResolving] = useState<SeqRow | null>(null)
   const [editingEmail, setEditingEmail] = useState<string | null>(null)
   const [editEmailVal, setEditEmailVal] = useState('')
+  const [editingNote, setEditingNote] = useState<string | null>(null)
+  const [editNoteVal, setEditNoteVal] = useState('')
   const [markingDone, setMarkingDone] = useState<{ stepId: string; seqId: string } | null>(null)
   const [doneNotes, setDoneNotes] = useState('')
   const [busyStep, setBusyStep] = useState<string | null>(null)
@@ -150,6 +160,8 @@ export default function FollowUps() {
       return {
         seq, lead, steps: sSteps, doneChannels, totalChannels, next, overdueDays, finished,
         dueState, statusLabel, effEmail: effectiveEmail(seq, managerEmail),
+        note: (seq.notes ?? '').trim(),
+        weekNotes: sSteps.map((s) => (s.notes ?? '').trim()).filter(Boolean).join(' · '),
       }
     })
   }, [sequences, leadMap, stepsBySeq, managerEmail])
@@ -174,6 +186,7 @@ export default function FollowUps() {
       if (fStage.length && !fStage.includes(r.lead?.stage ?? '')) return false
       if (fWeek.length && !fWeek.includes(String(r.next?.step_number ?? ''))) return false
       if (fEmail.length && !fEmail.includes(r.effEmail)) return false
+      if (fNotes.length && !fNotes.includes(r.note || r.weekNotes ? 'Has notes' : 'No notes')) return false
       if (dueFrom || dueTo) {
         const d = r.next?.scheduled_date
         if (!d) return false
@@ -182,7 +195,8 @@ export default function FollowUps() {
       }
       if (term) {
         const l = r.lead
-        const hay = [l ? displayName(l) : r.seq.lead_record_id, l?.practice, l?.email, l?.specialty, r.effEmail]
+        const hay = [l ? displayName(l) : r.seq.lead_record_id, l?.practice, l?.email, l?.specialty,
+                     r.effEmail, r.note, r.weekNotes]
         if (!hay.some((v) => (v ?? '').toLowerCase().includes(term))) return false
       }
       return true
@@ -208,6 +222,9 @@ export default function FollowUps() {
         case 'progress': return r.totalChannels ? r.doneChannels / r.totalChannels : 0
         case 'due': return r.next?.scheduled_date ?? '9999-12-31'
         case 'email': return r.effEmail.toLowerCase()
+        // Sorting by a free-text column is really "show me the ones with
+        // something written on them", so empty notes sort last either way.
+        case 'notes': return r.note ? r.note.toLowerCase() : '\uffff'
         case 'status': return r.statusLabel.toLowerCase()
         default: return 0
       }
@@ -220,14 +237,14 @@ export default function FollowUps() {
       if (va > vb) return sortDir
       return urgency(a, b)   // stable, useful tie-break
     })
-  }, [allRows, q, fStatus, fDue, fStage, fWeek, fEmail, dueFrom, dueTo, sortKey, sortDir])
+  }, [allRows, q, fStatus, fDue, fStage, fWeek, fEmail, fNotes, dueFrom, dueTo, sortKey, sortDir])
 
-  const filtersOn = !!(q.trim() || fDue.length || fStage.length || fWeek.length || fEmail.length || dueFrom || dueTo
+  const filtersOn = !!(q.trim() || fDue.length || fStage.length || fWeek.length || fEmail.length || fNotes.length || dueFrom || dueTo
     || fStatus.length !== 2 || !fStatus.includes('Active') || !fStatus.includes('Awaiting decision'))
 
   const clearFilters = () => {
     setQ(''); setFStatus(['Active', 'Awaiting decision']); setFDue([]); setFStage([])
-    setFWeek([]); setFEmail([]); setDueFrom(''); setDueTo('')
+    setFWeek([]); setFEmail([]); setFNotes([]); setDueFrom(''); setDueTo('')
   }
 
   const setSort = (k: string) => {
@@ -299,6 +316,34 @@ export default function FollowUps() {
     }
   }
 
+  // Blank saves as null rather than an empty string, so "no note" is one value
+  // in the database rather than two that look the same on screen.
+  const saveNote = async (seqId: string) => {
+    const val = editNoteVal.trim()
+    setBusySeq(seqId)
+    try {
+      await changeSequenceNotes(seqId, val || null)
+      setEditingNote(null)
+    } catch (e) {
+      alert('Could not save the note: ' + (e instanceof Error ? e.message : String(e)))
+    } finally {
+      setBusySeq(null)
+    }
+  }
+
+  const saveStepNote = async (stepId: string, raw: string, current: string | null) => {
+    const val = raw.trim()
+    if (val === (current ?? '').trim()) return   // nothing changed; don't write
+    setBusyStep(stepId)
+    try {
+      await changeStepNotes(stepId, val || null)
+    } catch (e) {
+      alert('Could not save the note: ' + (e instanceof Error ? e.message : String(e)))
+    } finally {
+      setBusyStep(null)
+    }
+  }
+
   // Blank clears the override so the sequence falls back to the Admin default.
   const saveEmail = async (seqId: string) => {
     const val = editEmailVal.trim()
@@ -328,13 +373,14 @@ export default function FollowUps() {
       </div>
 
       <div className="controls filters">
-        <input type="text" placeholder="Search name, practice, email…" value={q}
+        <input type="text" placeholder="Search name, practice, email, notes…" value={q}
                onChange={(e) => setQ(e.target.value)} style={{ width: 210 }} />
         <MultiSelect label="Status" options={STATUS_LABELS as unknown as string[]} selected={fStatus} onChange={setFStatus} />
         <MultiSelect label="Due" options={DUE_STATES as unknown as string[]} selected={fDue} onChange={setFDue} />
         <MultiSelect label="Stage" options={stageOpts} selected={fStage} onChange={setFStage} />
         <MultiSelect label="Next week" options={WEEKS} selected={fWeek} onChange={setFWeek} />
         <MultiSelect label="Reminder to" options={emailOpts} selected={fEmail} onChange={setFEmail} />
+        <MultiSelect label="Notes" options={['Has notes', 'No notes']} selected={fNotes} onChange={setFNotes} />
         <span className="datef small muted">
           Due from <input type="date" value={dueFrom} onChange={(e) => setDueFrom(e.target.value)} />
         </span>
@@ -400,6 +446,8 @@ export default function FollowUps() {
                   <th style={{ width: 150 }} className="sortable" onClick={() => setSort('progress')}>Progress{sortMark('progress')}</th>
                   <th style={{ width: 150 }} className="sortable" onClick={() => setSort('due')}>Next due{sortMark('due')}</th>
                   <th style={{ width: 230 }} className="sortable" onClick={() => setSort('email')}>Reminder email{sortMark('email')}</th>
+                  <th style={{ width: 240 }} className="sortable" title="Sort notes first"
+                      onClick={() => setSort('notes')}>Notes{sortMark('notes')}</th>
                   <th style={{ width: 130 }} className="sortable" onClick={() => setSort('status')}>Status{sortMark('status')}</th>
                 </tr>
               </thead>
@@ -493,6 +541,40 @@ export default function FollowUps() {
                           )}
                         </td>
                         <td>
+                          {editingNote === seq.id ? (
+                            <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                              <textarea value={editNoteVal} rows={3} autoFocus
+                                        placeholder="e.g. decision maker away until the 14th"
+                                        onChange={(e) => setEditNoteVal(e.target.value)}
+                                        onKeyDown={(e) => {
+                                          // Enter saves, Shift+Enter makes a new line — the note is
+                                          // usually one line, so saving should not need the mouse.
+                                          if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveNote(seq.id) }
+                                          if (e.key === 'Escape') setEditingNote(null)
+                                        }}
+                                        style={{ width: '100%', fontSize: 12, font: 'inherit', fontFamily: 'inherit', resize: 'vertical', padding: '5px 7px', border: '1px solid var(--line)', borderRadius: 7 }} />
+                              <button className="btn" style={{ padding: '3px 10px', fontSize: 11.5 }}
+                                      onClick={() => saveNote(seq.id)} disabled={busySeq === seq.id}>Save</button>
+                              <button className="btn ghost" style={{ padding: '3px 9px', fontSize: 11.5 }}
+                                      onClick={() => setEditingNote(null)}>Cancel</button>
+                              <span className="small muted" style={{ flexBasis: '100%' }}>Enter saves · Shift+Enter for a new line</span>
+                            </div>
+                          ) : (
+                            <div className="fup-note-cell"
+                                 title={r.note || 'Click to add a note'}
+                                 onClick={() => { setEditingNote(seq.id); setEditNoteVal(seq.notes ?? '') }}>
+                              {r.note
+                                ? <span className="small" style={{ whiteSpace: 'pre-wrap' }}>{r.note}</span>
+                                : <span className="small muted">+ Add note</span>}
+                              {r.weekNotes && (
+                                <div className="small muted" style={{ marginTop: 3, fontStyle: 'italic' }}>
+                                  Weeks: {r.weekNotes}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </td>
+                        <td>
                           <span className={'chip fup-status-' + seq.status}>
                             {seq.status === 'active' ? (finished ? '⏳ Awaiting' : '🔄 Active') : seq.status === 'won' ? '✅ Won' : '❌ Lost'}
                           </span>
@@ -546,7 +628,13 @@ export default function FollowUps() {
                                   )
                                 })}
                               </div>
-                              {step.notes && <div className="small muted" style={{ marginTop: 4 }}>Note: {step.notes}</div>}
+                            </td>
+                            <td>
+                              <input type="text" defaultValue={step.notes ?? ''} key={step.id + ':' + (step.notes ?? '')}
+                                     placeholder="Note for this week…" disabled={busyStep === step.id || seq.status !== 'active'}
+                                     onBlur={(e) => saveStepNote(step.id, e.target.value, step.notes)}
+                                     onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                                     style={{ width: '100%', fontSize: 12 }} />
                             </td>
                             <td>
                               <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start' }}>
